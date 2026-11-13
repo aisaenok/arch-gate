@@ -27,7 +27,9 @@ test("unavailable analyzer evidence produces PARTIAL", () => {
         id: "backend",
         type: "java",
         root: "/backend",
-        roles: ["api-provider"]
+        roles: ["api-provider"],
+        sourceDirs: ["/backend"],
+        frameworks: ["jax-rs"]
       }
     },
     facts: [],
