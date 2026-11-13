@@ -120,3 +120,120 @@ rules:
     /repositoryRelation.quantifier must be any or all/
   );
 });
+
+
+test("rejects repositoryRelation with both direct type and path", async () => {
+  const file = await configFile(`
+repositories:
+  contracts:
+    type: openapi
+    root: .
+    roles: [api-contract]
+    openapi: openapi.yaml
+
+  backend:
+    type: java
+    root: .
+    roles: [api-provider]
+
+relations:
+  - type: implemented-by
+    from: contracts
+    to: backend
+
+rules:
+  - id: PATH001
+    description: ambiguous path
+    select:
+      fact: contract-operation
+    assert:
+      - field: operationKey
+        memberOf:
+          fact: backend-endpoint
+          field: operationKey
+          repositoryRelation:
+            type: implemented-by
+            path:
+              - type: implemented-by
+            currentField: repositoryId
+            candidateField: repositoryId
+`);
+
+  await assert.rejects(
+    () => loadConfig(file),
+    /must define exactly one of type or path/
+  );
+});
+
+test("rejects empty repository relation path", async () => {
+  const file = await configFile(`
+repositories:
+  contracts:
+    type: openapi
+    root: .
+    roles: [api-contract]
+    openapi: openapi.yaml
+
+rules:
+  - id: PATH001
+    description: empty path
+    select:
+      fact: contract-operation
+    assert:
+      - field: operationKey
+        memberOf:
+          fact: contract-operation
+          field: operationKey
+          repositoryRelation:
+            path: []
+            currentField: repositoryId
+            candidateField: repositoryId
+`);
+
+  await assert.rejects(
+    () => loadConfig(file),
+    /path must be a non-empty array/
+  );
+});
+
+test("rejects unknown relation type inside repository path", async () => {
+  const file = await configFile(`
+repositories:
+  contracts:
+    type: openapi
+    root: .
+    roles: [api-contract]
+    openapi: openapi.yaml
+
+  backend:
+    type: java
+    root: .
+    roles: [api-provider]
+
+relations:
+  - type: implemented-by
+    from: contracts
+    to: backend
+
+rules:
+  - id: PATH001
+    description: typo in path
+    select:
+      fact: contract-operation
+    assert:
+      - field: operationKey
+        memberOf:
+          fact: backend-endpoint
+          field: operationKey
+          repositoryRelation:
+            path:
+              - type: implementd-by
+            currentField: repositoryId
+            candidateField: repositoryId
+`);
+
+  await assert.rejects(
+    () => loadConfig(file),
+    /unknown repository relation type "implementd-by" in path\[0\]/
+  );
+});
