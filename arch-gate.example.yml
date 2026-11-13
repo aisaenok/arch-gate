@@ -27,6 +27,15 @@ repositories:
     frameworks:
       - jax-rs
 
+relations:
+  - type: implemented-by
+    from: contracts
+    to: backend
+
+  - type: generated-for
+    from: contracts
+    to: frontend
+
 rules:
   - id: API001
     description: API consumer code may reach HTTP only through generated runtime
@@ -82,7 +91,12 @@ rules:
           repositoryRoles:
             - field: repositoryId
               role: api-contract
-        message: Generated runtime calls an HTTP operation absent from the API contract
+          repositoryRelation:
+            type: generated-for
+            currentField: repositoryId
+            candidateField: repositoryId
+            direction: incoming
+        message: Generated runtime calls an HTTP operation absent from its related API contract
     sourceField: source
     targetField: operationKey
 
@@ -120,7 +134,12 @@ rules:
           repositoryRoles:
             - field: repositoryId
               role: api-contract
-        message: JAX-RS endpoint is absent from the API contract
+          repositoryRelation:
+            type: implemented-by
+            currentField: repositoryId
+            candidateField: repositoryId
+            direction: incoming
+        message: JAX-RS endpoint is absent from its related API contract
     sourceField: source
     targetField: operationKey
 
@@ -140,7 +159,12 @@ rules:
           repositoryRoles:
             - field: repositoryId
               role: api-provider
-        message: API contract operation has no backend implementation
+          repositoryRelation:
+            type: implemented-by
+            currentField: repositoryId
+            candidateField: repositoryId
+            direction: outgoing
+        message: API contract operation has no implementation in its related backend
     sourceField: operationId
     targetField: operationKey
 
@@ -165,7 +189,12 @@ rules:
               equals: true
             - field: operationKeyKnown
               equals: true
-        message: API contract operation has no generated frontend runtime call
+          repositoryRelation:
+            type: generated-for
+            currentField: repositoryId
+            candidateField: repositoryId
+            direction: outgoing
+        message: API contract operation has no generated call in its related frontend
     sourceField: operationId
     targetField: operationKey
 
@@ -187,6 +216,11 @@ rules:
           repositoryRoles:
             - field: repositoryId
               role: api-contract
+          repositoryRelation:
+            type: implemented-by
+            currentField: providerRepositoryId
+            candidateField: repositoryId
+            direction: incoming
     targetField: operationId
 
   - id: PLAN002

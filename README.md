@@ -71,6 +71,40 @@ This enables:
 
 The tool deliberately does not flag arbitrary local types just because their shape resembles an OpenAPI schema. A local DTO becomes relevant when it actually crosses a contract/generated boundary.
 
+## Repository topology
+
+Roles classify repositories; relations describe which repositories belong together.
+
+```yaml
+relations:
+  - type: implemented-by
+    from: contracts-orders
+    to: backend-orders
+
+  - type: generated-for
+    from: contracts-orders
+    to: frontend-orders
+```
+
+Relation names are project-defined. The engine only understands directed edges.
+
+A `memberOf` assertion can scope candidate facts through a relation:
+
+```yaml
+repositoryRelation:
+  type: implemented-by
+  currentField: repositoryId
+  candidateField: repositoryId
+  direction: outgoing
+```
+
+This prevents a contract operation from being accepted merely because some unrelated
+repository with role `api-provider` implements the same endpoint.
+
+If a relation-scoped rule has no matching topology edge, or the related repository
+does not have sufficient analyzer evidence, the result is `PARTIAL` rather than a
+guessed PASS/FAIL.
+
 ## Project policy
 
 See `arch-gate.example.yml`.
@@ -111,6 +145,6 @@ This is still a PoC.
 - TypeScript resolution is compiler-based but not SCIP-based.
 - Cross-function value/data-flow is intentionally limited.
 - Java endpoint extraction currently supports explicitly configured JAX-RS repositories; Spring MVC is not implemented yet.
-- Repository-role matching is intentionally simple; multi-contract/multi-provider topologies will need explicit relationship scoping.
+- Repository relations scope multi-contract/multi-provider topologies; richer graph queries beyond direct edges are not implemented yet.
 - No baseline/diff/impact/why graph tooling yet.
 - The YAML DSL stays intentionally small; semantic complexity belongs in analyzers/facts, not in increasingly programmable YAML.

@@ -3,13 +3,14 @@ import type {
   CoverageGap,
   EvaluationResult,
   Fact,
-  FactEvidence,
+  RuleCondition,
   RuleDefinition,
   RuleScope,
   RuleSelector,
   Violation
 } from "./model.js";
 import { evaluateCondition } from "./conditions.js";
+import { relatedRepositoryIds } from "./relations.js";
 import { selectFacts } from "./selectors.js";
 
 function ruleApplies(
@@ -93,11 +94,19 @@ function selectorCoverage(
     }));
 }
 
-function requiredSelectors(rule: RuleDefinition): RuleSelector[] {
+function baseRequiredSelectors(
+  rule: RuleDefinition
+): RuleSelector[] {
   const selectors: RuleSelector[] = [rule.select];
 
   for (const condition of rule.assert) {
-    if (!condition.memberOf) continue;
+    if (
+      !condition.memberOf ||
+      condition.memberOf.repositoryRelation
+    ) {
+      continue;
+    }
+
     selectors.push({
       fact: condition.memberOf.fact,
       repositoryRoles: condition.memberOf.repositoryRoles,
@@ -108,23 +117,106 @@ function requiredSelectors(rule: RuleDefinition): RuleSelector[] {
   return selectors;
 }
 
-function coverageGaps(
+function baseCoverageGaps(
   model: ArchitectureModel,
   rule: RuleDefinition
 ): CoverageGap[] {
   const gaps: CoverageGap[] = [];
-  const seen = new Set<string>();
 
-  for (const selector of requiredSelectors(rule)) {
-    for (const gap of selectorCoverage(model, rule, selector)) {
-      const key = `${gap.rule}|${gap.fact}|${gap.repositoryId ?? ""}|${gap.message}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      gaps.push(gap);
+  for (const selector of baseRequiredSelectors(rule)) {
+    gaps.push(...selectorCoverage(model, rule, selector));
+  }
+
+  return gaps;
+}
+
+function relationCoverageGaps(
+  model: ArchitectureModel,
+  rule: RuleDefinition,
+  fact: Fact,
+  condition: RuleCondition
+): CoverageGap[] {
+  const selector = condition.memberOf;
+  const relation = selector?.repositoryRelation;
+
+  if (!selector || !relation) return [];
+
+  const related = relatedRepositoryIds(model, fact, relation);
+  if (!related) {
+    return [
+      {
+        rule: rule.id,
+        fact: selector.fact,
+        message:
+          `Fact "${fact.kind}" does not contain repository field "${relation.currentField}" required by relation "${relation.type}".`
+      }
+    ];
+  }
+
+  if (related.size === 0) {
+    const currentRepository = fact[relation.currentField];
+    return [
+      {
+        rule: rule.id,
+        fact: selector.fact,
+        repositoryId:
+          typeof currentRepository === "string"
+            ? currentRepository
+            : undefined,
+        message:
+          `No ${relation.direction ?? "outgoing"} repository relation "${relation.type}" is configured for "${String(currentRepository)}".`
+      }
+    ];
+  }
+
+  const gaps: CoverageGap[] = [];
+
+  for (const repositoryId of related) {
+    const evidence = model.evidence.filter(
+      (item) =>
+        item.factKind === selector.fact &&
+        item.repositoryId === repositoryId
+    );
+
+    if (evidence.length === 0) {
+      gaps.push({
+        rule: rule.id,
+        fact: selector.fact,
+        repositoryId,
+        message:
+          `No analyzer evidence exists for relation-scoped fact "${selector.fact}" in repository "${repositoryId}".`
+      });
+      continue;
+    }
+
+    for (const item of evidence) {
+      if (item.status === "complete") continue;
+      gaps.push({
+        rule: rule.id,
+        fact: selector.fact,
+        repositoryId,
+        message:
+          item.message ??
+          `Evidence for relation-scoped fact "${selector.fact}" is ${item.status}.`
+      });
     }
   }
 
   return gaps;
+}
+
+function addUniqueGaps(
+  target: CoverageGap[],
+  seen: Set<string>,
+  gaps: CoverageGap[]
+): void {
+  for (const gap of gaps) {
+    const key =
+      `${gap.rule}|${gap.fact}|${gap.repositoryId ?? ""}|${gap.message}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    target.push(gap);
+  }
 }
 
 export function evaluateRules(
@@ -134,16 +226,33 @@ export function evaluateRules(
 ): EvaluationResult {
   const violations: Violation[] = [];
   const gaps: CoverageGap[] = [];
+  const seenGaps = new Set<string>();
 
   for (const rule of rules) {
     if (!ruleApplies(rule, scope)) continue;
 
-    gaps.push(...coverageGaps(model, rule));
+    addUniqueGaps(
+      gaps,
+      seenGaps,
+      baseCoverageGaps(model, rule)
+    );
 
     const facts = selectFacts(model, rule.select);
 
     for (const fact of facts) {
       for (const condition of rule.assert) {
+        const conditionGaps = relationCoverageGaps(
+          model,
+          rule,
+          fact,
+          condition
+        );
+
+        if (conditionGaps.length > 0) {
+          addUniqueGaps(gaps, seenGaps, conditionGaps);
+          continue;
+        }
+
         if (evaluateCondition(model, fact, condition)) continue;
 
         violations.push({

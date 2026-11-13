@@ -17,6 +17,7 @@ function config(
 
   return {
     configFile: "test",
+    relations: [],
     repositories: {
       "web-portal": {
         id: "web-portal",

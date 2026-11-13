@@ -84,6 +84,7 @@ test("backend endpoint declared in OpenAPI passes", async () => {
   );
 
   const model: ArchitectureModel = {
+    relations: [],
     repositories: {
       backend: javaRepository("bh-jaxrs"),
       contracts: contractRepository
@@ -105,6 +106,7 @@ test("backend endpoint absent from OpenAPI fails", async () => {
   );
 
   const model: ArchitectureModel = {
+    relations: [],
     repositories: {
       backend: javaRepository("bh-jaxrs-invalid"),
       contracts: contractRepository
