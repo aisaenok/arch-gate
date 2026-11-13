@@ -124,6 +124,51 @@ rules:
     sourceField: source
     targetField: operationKey
 
+  - id: API006
+    description: Every API contract operation must be implemented by the backend
+    scope: check
+    select:
+      fact: contract-operation
+      repositoryRoles:
+        - field: repositoryId
+          role: api-contract
+    assert:
+      - field: operationKey
+        memberOf:
+          fact: backend-endpoint
+          field: operationKey
+          repositoryRoles:
+            - field: repositoryId
+              role: api-provider
+        message: API contract operation has no backend implementation
+    sourceField: operationId
+    targetField: operationKey
+
+  - id: API007
+    description: Every API contract operation must exist in generated frontend runtime
+    scope: check
+    select:
+      fact: contract-operation
+      repositoryRoles:
+        - field: repositoryId
+          role: api-contract
+    assert:
+      - field: operationKey
+        memberOf:
+          fact: http-call
+          field: operationKey
+          repositoryRoles:
+            - field: repositoryId
+              role: api-consumer
+          where:
+            - field: sourceGenerated
+              equals: true
+            - field: operationKeyKnown
+              equals: true
+        message: API contract operation has no generated frontend runtime call
+    sourceField: operationId
+    targetField: operationKey
+
   - id: PLAN001
     description: Planned operation must exist in the API contract
     scope: plan
