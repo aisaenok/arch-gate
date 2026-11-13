@@ -1,9 +1,7 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import {
-  BaseJavaCstVisitorWithDefaults,
-  parse
-} from "java-parser";
+import type { SyntaxNode } from "@lezer/common";
+import { parser } from "@lezer/java";
 import { operationKey } from "../core/routes.js";
 import type {
   AnalysisResult,
@@ -28,21 +26,10 @@ interface AnnotationInfo {
   attributes: Map<string, string>;
 }
 
-interface ClassContext {
-  name: string;
-  path: string;
-}
-
-interface MethodContext {
-  name: string;
-  line: number;
-  annotations: AnnotationInfo[];
-}
-
 interface EndpointDraft {
   className: string;
   methodName: string;
-  line: number;
+  offset: number;
   operationId: string;
   method: string;
   path: string;
@@ -83,82 +70,116 @@ async function walkJava(directory: string): Promise<string[]> {
   return files;
 }
 
-function collectTokens(node: any): any[] {
-  if (!node) return [];
-  if (node.image !== undefined) return [node];
-
-  const tokens: any[] = [];
-  if (node.children) {
-    for (const value of Object.values(node.children)) {
-      if (!Array.isArray(value)) continue;
-      for (const child of value) {
-        tokens.push(...collectTokens(child));
-      }
-    }
+function directChildren(node: SyntaxNode): SyntaxNode[] {
+  const result: SyntaxNode[] = [];
+  for (
+    let child = node.firstChild;
+    child;
+    child = child.nextSibling
+  ) {
+    result.push(child);
   }
+  return result;
+}
 
-  return tokens.sort(
-    (left, right) =>
-      (left.startOffset ?? 0) - (right.startOffset ?? 0)
+function directChild(
+  node: SyntaxNode,
+  name: string
+): SyntaxNode | undefined {
+  return directChildren(node).find(
+    (child) => child.name === name
   );
 }
 
-function textOf(node: any): string | undefined {
-  const tokens = collectTokens(node);
-  return tokens.length > 0
-    ? tokens.map((token) => token.image).join("")
-    : undefined;
-}
-
-function unquote(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  if (
-    (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1);
+function firstDescendant(
+  node: SyntaxNode,
+  name: string
+): SyntaxNode | undefined {
+  for (const child of directChildren(node)) {
+    if (child.name === name) return child;
+    const nested = firstDescendant(child, name);
+    if (nested) return nested;
   }
-  return trimmed;
+  return undefined;
 }
 
-function annotationName(ctx: any): string | undefined {
-  const identifiers =
-    ctx.typeName?.[0]?.children?.Identifier ?? [];
-  return identifiers.at(-1)?.image;
+function annotationNodes(node: SyntaxNode): SyntaxNode[] {
+  const result: SyntaxNode[] = [];
+
+  const visit = (current: SyntaxNode): void => {
+    for (const child of directChildren(current)) {
+      if (
+        child.name === "Annotation" ||
+        child.name === "MarkerAnnotation"
+      ) {
+        result.push(child);
+        continue;
+      }
+      visit(child);
+    }
+  };
+
+  visit(node);
+  return result;
 }
 
-function annotationInfo(ctx: any): AnnotationInfo | undefined {
-  const name = annotationName(ctx);
-  if (!name) return undefined;
+function sourceText(node: SyntaxNode, source: string): string {
+  return source.slice(node.from, node.to);
+}
+
+function decodeJavaString(raw: string): string {
+  const body = raw.slice(1, -1);
+  return body
+    .replace(/\\\"/g, '"')
+    .replace(/\\\\/g, "\\");
+}
+
+function stringLiterals(text: string): string[] {
+  const result: string[] = [];
+  const pattern = /"(?:\\.|[^"\\])*"/g;
+  for (const match of text.matchAll(pattern)) {
+    result.push(decodeJavaString(match[0]));
+  }
+  return result;
+}
+
+function parseAnnotation(text: string): AnnotationInfo | undefined {
+  const nameMatch = text.match(
+    /^@\s*(?:[A-Za-z_$][\w$]*\.)*([A-Za-z_$][\w$]*)/
+  );
+  if (!nameMatch) return undefined;
 
   const attributes = new Map<string, string>();
-  let value: string | undefined;
-
-  if (ctx.elementValue?.[0]) {
-    value = unquote(textOf(ctx.elementValue[0]));
+  const operationIdMatch = text.match(
+    /\boperationId\s*=\s*("(?:\\.|[^"\\])*")/
+  );
+  if (operationIdMatch) {
+    attributes.set(
+      "operationId",
+      decodeJavaString(operationIdMatch[1])
+    );
   }
 
-  const pairs =
-    ctx.elementValuePairList?.[0]?.children?.elementValuePair ?? [];
-
-  for (const pair of pairs) {
-    const key = pair.children?.Identifier?.[0]?.image;
-    const raw = textOf(pair.children?.elementValue?.[0]);
-    if (key && raw !== undefined) {
-      attributes.set(key, unquote(raw) ?? raw);
-    }
-  }
-
-  return { name, value, attributes };
+  return {
+    name: nameMatch[1],
+    value: stringLiterals(text)[0],
+    attributes
+  };
 }
 
-function pathFromAnnotation(annotation: AnnotationInfo): string {
-  return (
-    annotation.value ??
-    annotation.attributes.get("value") ??
-    ""
-  );
+function annotations(
+  node: SyntaxNode | undefined,
+  source: string
+): AnnotationInfo[] {
+  if (!node) return [];
+  return annotationNodes(node)
+    .map((annotation) =>
+      parseAnnotation(sourceText(annotation, source))
+    )
+    .filter(
+      (annotation): annotation is AnnotationInfo =>
+        annotation !== undefined
+    );
 }
 
 function joinPaths(base: string, child: string): string {
@@ -167,128 +188,169 @@ function joinPaths(base: string, child: string): string {
     .filter(Boolean)
     .map((item) => item.replace(/^\/+|\/+$/g, ""));
 
-  return parts.length === 0 ? "/" : `/${parts.join("/")}`;
+  return parts.length === 0
+    ? "/"
+    : `/${parts.join("/")}`;
 }
 
-function supportsJaxRs(source: string): boolean {
-  return (
-    source.includes("jakarta.ws.rs.") ||
-    source.includes("javax.ws.rs.")
+function definitionName(
+  node: SyntaxNode,
+  source: string
+): string {
+  const definition = firstDescendant(node, "Definition");
+  return definition ? sourceText(definition, source) : "";
+}
+
+function lineStarts(source: string): number[] {
+  const starts = [0];
+  for (let index = 0; index < source.length; index += 1) {
+    if (source.charCodeAt(index) === 10) {
+      starts.push(index + 1);
+    }
+  }
+  return starts;
+}
+
+function lineAt(starts: number[], offset: number): number {
+  let low = 0;
+  let high = starts.length;
+
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (starts[mid] <= offset) low = mid + 1;
+    else high = mid;
+  }
+
+  return Math.max(1, low);
+}
+
+function hasParseError(root: SyntaxNode): boolean {
+  const cursor = root.cursor();
+
+  do {
+    if (cursor.type.isError) return true;
+  } while (cursor.next());
+
+  return false;
+}
+
+function endpointFromMethod(
+  methodNode: SyntaxNode,
+  className: string,
+  classPath: string,
+  source: string
+): EndpointDraft | undefined {
+  const modifiers = directChild(methodNode, "Modifiers");
+  const methodAnnotations = annotations(modifiers, source);
+
+  const httpAnnotation = methodAnnotations.find((annotation) =>
+    HTTP_ANNOTATIONS.has(annotation.name)
   );
+  if (!httpAnnotation) return undefined;
+
+  const method =
+    HTTP_ANNOTATIONS.get(httpAnnotation.name)!;
+  const methodPath =
+    methodAnnotations.find(
+      (annotation) => annotation.name === "Path"
+    )?.value ?? "";
+
+  const operationId =
+    methodAnnotations
+      .find((annotation) => annotation.name === "Operation")
+      ?.attributes.get("operationId") ?? "";
+
+  const header = directChild(methodNode, "methodHeader");
+  const declarator = header
+    ? firstDescendant(header, "methodDeclarator")
+    : undefined;
+
+  return {
+    className,
+    methodName: declarator
+      ? definitionName(declarator, source)
+      : "",
+    offset: methodNode.from,
+    operationId,
+    method,
+    path: joinPaths(classPath, methodPath)
+  };
 }
 
-class JaxRsVisitor extends BaseJavaCstVisitorWithDefaults {
-  readonly endpoints: EndpointDraft[] = [];
-  private readonly classStack: ClassContext[] = [];
+function collectTypeEndpoints(
+  typeNode: SyntaxNode,
+  source: string
+): EndpointDraft[] {
+  const modifiers = directChild(typeNode, "Modifiers");
+  const classAnnotations = annotations(modifiers, source);
+  const classPath =
+    classAnnotations.find(
+      (annotation) => annotation.name === "Path"
+    )?.value ?? "";
+  const className = definitionName(typeNode, source);
 
-  constructor() {
-    super();
-    this.validateVisitor();
-  }
+  const body =
+    directChild(typeNode, "ClassBody") ??
+    directChild(typeNode, "InterfaceBody");
 
-  classDeclaration(ctx: any): void {
-    const classAnnotations: AnnotationInfo[] = [];
+  if (!body) return [];
 
-    for (const modifier of ctx.classModifier ?? []) {
-      const annotation =
-        modifier.children?.annotation?.[0]?.children;
-      if (annotation) {
-        const info = annotationInfo(annotation);
-        if (info) classAnnotations.push(info);
-      }
-    }
+  const endpoints: EndpointDraft[] = [];
 
-    const classPath = classAnnotations
-      .filter((annotation) => annotation.name === "Path")
-      .map(pathFromAnnotation)
-      .at(0) ?? "";
-
-    const normal = ctx.normalClassDeclaration?.[0];
-    const className =
-      normal?.children?.typeIdentifier?.[0]?.children?.Identifier?.[0]?.image ??
-      "";
-
-    this.classStack.push({
-      name: className,
-      path: classPath
-    });
-
-    if (normal) this.visit(normal);
-
-    this.classStack.pop();
-  }
-
-  methodDeclaration(ctx: any): void {
-    const currentClass = this.classStack.at(-1);
-    if (!currentClass) return;
-
-    const methodCtx: MethodContext = {
-      name: "",
-      line: 0,
-      annotations: []
-    };
-
-    const header = ctx.methodHeader?.[0];
-    const declarator =
-      header?.children?.methodDeclarator?.[0];
-    const nameToken =
-      declarator?.children?.Identifier?.[0];
-
-    if (nameToken) {
-      methodCtx.name = nameToken.image;
-      methodCtx.line = nameToken.startLine ?? 0;
-    }
-
-    for (const modifier of ctx.methodModifier ?? []) {
-      const annotation =
-        modifier.children?.annotation?.[0]?.children;
-      if (!annotation) continue;
-      const info = annotationInfo(annotation);
-      if (info) methodCtx.annotations.push(info);
-    }
-
-    const httpAnnotation = methodCtx.annotations.find((annotation) =>
-      HTTP_ANNOTATIONS.has(annotation.name)
-    );
-    if (!httpAnnotation) return;
-
-    const method =
-      HTTP_ANNOTATIONS.get(httpAnnotation.name)!;
-    const methodPath =
-      methodCtx.annotations
-        .filter((annotation) => annotation.name === "Path")
-        .map(pathFromAnnotation)
-        .at(0) ?? "";
-
-    const operation =
-      methodCtx.annotations.find(
-        (annotation) => annotation.name === "Operation"
+  for (const child of directChildren(body)) {
+    if (child.name === "MethodDeclaration") {
+      const endpoint = endpointFromMethod(
+        child,
+        className,
+        classPath,
+        source
       );
-    const operationId =
-      operation?.attributes.get("operationId") ?? "";
+      if (endpoint) endpoints.push(endpoint);
+      continue;
+    }
 
-    this.endpoints.push({
-      className: currentClass.name,
-      methodName: methodCtx.name,
-      line: methodCtx.line,
-      operationId,
-      method,
-      path: joinPaths(currentClass.path, methodPath)
-    });
+    if (
+      child.name === "ClassDeclaration" ||
+      child.name === "InterfaceDeclaration"
+    ) {
+      endpoints.push(...collectTypeEndpoints(child, source));
+    }
   }
+
+  return endpoints;
+}
+
+function collectEndpoints(
+  root: SyntaxNode,
+  source: string
+): EndpointDraft[] {
+  const endpoints: EndpointDraft[] = [];
+
+  for (const child of directChildren(root)) {
+    if (
+      child.name === "ClassDeclaration" ||
+      child.name === "InterfaceDeclaration"
+    ) {
+      endpoints.push(...collectTypeEndpoints(child, source));
+    }
+  }
+
+  return endpoints;
 }
 
 function endpointFacts(
   repository: ResolvedJavaRepository,
   file: string,
+  source: string,
   endpoints: EndpointDraft[]
 ): Fact[] {
   const sourceFile = relativeToRoot(file, repository.root);
+  const starts = lineStarts(source);
 
   return endpoints.map((endpoint) => ({
     kind: "backend-endpoint",
     repositoryId: repository.id,
-    source: `${sourceFile}:${endpoint.line}:1`,
+    source: `${sourceFile}:${lineAt(starts, endpoint.offset)}:1`,
     sourceFile,
     framework: "jax-rs",
     className: endpoint.className,
@@ -334,26 +396,25 @@ export async function analyzeJavaRepository(
 
   const facts: Fact[] = [];
   const parseFailures: string[] = [];
-  let jaxRsFiles = 0;
 
   for (const file of files) {
     const source = await readFile(file, "utf8");
+    const tree = parser.parse(source);
 
-    if (!supportsJaxRs(source)) continue;
-    jaxRsFiles += 1;
-
-    try {
-      const cst = parse(source);
-      const visitor = new JaxRsVisitor();
-      visitor.visit(cst);
-      facts.push(...endpointFacts(repository, file, visitor.endpoints));
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : String(error);
+    if (hasParseError(tree.topNode)) {
       parseFailures.push(
-        `${relativeToRoot(file, repository.root)}: ${message}`
+        `${relativeToRoot(file, repository.root)}: Java syntax tree contains error nodes`
       );
+      continue;
     }
+
+    const endpoints = collectEndpoints(tree.topNode, source);
+    facts.push(...endpointFacts(
+      repository,
+      file,
+      source,
+      endpoints
+    ));
   }
 
   const evidence: FactEvidence = parseFailures.length
@@ -363,17 +424,13 @@ export async function analyzeJavaRepository(
         factKind: "backend-endpoint",
         status: "partial",
         message:
-          `${parseFailures.length} JAX-RS Java file(s) failed to parse: ${parseFailures.slice(0, 3).join("; ")}`
+          `${parseFailures.length} Java file(s) failed syntax parsing: ${parseFailures.slice(0, 3).join("; ")}`
       }
     : {
         repositoryId: repository.id,
         producer: "java",
         factKind: "backend-endpoint",
-        status: "complete",
-        message:
-          jaxRsFiles === 0
-            ? "JAX-RS analysis completed; no JAX-RS source files were found."
-            : undefined
+        status: "complete"
       };
 
   return {
