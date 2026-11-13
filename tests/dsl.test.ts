@@ -12,13 +12,17 @@ const model: ArchitectureModel = {
       id: "consumer",
       type: "java",
       root: "/consumer",
-      roles: ["consumer"]
+      roles: ["consumer"],
+      sourceDirs: ["/consumer"],
+      frameworks: []
     },
     catalog: {
       id: "catalog",
       type: "java",
       root: "/catalog",
-      roles: ["catalog"]
+      roles: ["catalog"],
+      sourceDirs: ["/catalog"],
+      frameworks: []
     }
   },
   facts: [
