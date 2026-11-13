@@ -85,7 +85,18 @@ export const FACT_DEFINITIONS = {
   },
   "backend-endpoint": {
     producer: "java",
-    fields: ["repositoryId", "source", "operationId", "method", "path", "operationKey"]
+    fields: [
+      "repositoryId",
+      "source",
+      "sourceFile",
+      "framework",
+      "className",
+      "methodName",
+      "operationId",
+      "method",
+      "path",
+      "operationKey"
+    ]
   },
   "intent-api-call": {
     producer: "intent",

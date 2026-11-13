@@ -6,6 +6,7 @@ import {
   assertKnownFactKind
 } from "../core/facts.js";
 import type {
+  JavaFramework,
   MemberOfSelector,
   RawGateConfig,
   ResolvedGateConfig,
@@ -15,12 +16,37 @@ import type {
   RuleSelector
 } from "../core/model.js";
 
+const JAVA_FRAMEWORKS = new Set<JavaFramework>(["jax-rs"]);
+
 function requireRoles(repositoryId: string, roles: unknown): string[] {
   if (!Array.isArray(roles) || roles.some((role) => typeof role !== "string")) {
     throw new Error(`Repository "${repositoryId}" must define roles as an array of strings`);
   }
 
   return roles;
+}
+
+function requireJavaFrameworks(
+  repositoryId: string,
+  frameworks: unknown
+): JavaFramework[] {
+  if (frameworks === undefined) return [];
+
+  if (!Array.isArray(frameworks) || frameworks.some((item) => typeof item !== "string")) {
+    throw new Error(
+      `Java repository "${repositoryId}" must define frameworks as an array of strings`
+    );
+  }
+
+  for (const framework of frameworks) {
+    if (!JAVA_FRAMEWORKS.has(framework as JavaFramework)) {
+      throw new Error(
+        `Java repository "${repositoryId}" references unsupported framework "${framework}". Supported: ${[...JAVA_FRAMEWORKS].join(", ")}`
+      );
+    }
+  }
+
+  return frameworks as JavaFramework[];
 }
 
 function validateSelector(ruleId: string, selector: RuleSelector, context: string): void {
@@ -165,7 +191,16 @@ export async function loadConfig(configFile: string): Promise<ResolvedGateConfig
     }
 
     if (repository.type === "java") {
-      repositories[id] = { id, type: "java", root, roles };
+      repositories[id] = {
+        id,
+        type: "java",
+        root,
+        roles,
+        sourceDirs: (repository.sourceDirs ?? ["."]).map((dir) =>
+          path.resolve(root, dir)
+        ),
+        frameworks: requireJavaFrameworks(id, repository.frameworks)
+      };
       continue;
     }
 

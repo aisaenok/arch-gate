@@ -1,5 +1,6 @@
 export type OutputFormat = "text" | "json";
 export type RepositoryType = "typescript" | "openapi" | "java";
+export type JavaFramework = "jax-rs";
 export type RuleScope = "check" | "plan" | "both";
 export type FactValue = string | number | boolean | null;
 export type EvidenceStatus = "complete" | "partial" | "unavailable";
@@ -27,6 +28,8 @@ export interface RawOpenApiRepository extends RawRepositoryBase {
 
 export interface RawJavaRepository extends RawRepositoryBase {
   type: "java";
+  sourceDirs?: string[];
+  frameworks?: JavaFramework[];
 }
 
 export type RawRepositoryConfig =
@@ -109,6 +112,8 @@ export interface ResolvedOpenApiRepository extends ResolvedRepositoryBase {
 
 export interface ResolvedJavaRepository extends ResolvedRepositoryBase {
   type: "java";
+  sourceDirs: string[];
+  frameworks: JavaFramework[];
 }
 
 export type ResolvedRepository =
