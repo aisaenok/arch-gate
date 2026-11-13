@@ -22,6 +22,10 @@ repositories:
     type: java
     root: ../bh
     roles: [api-provider]
+    sourceDirs:
+      - src/main/java
+    frameworks:
+      - jax-rs
 
 rules:
   - id: API001
@@ -99,6 +103,26 @@ rules:
         message: Generated runtime HTTP call has an unresolved method/path
     sourceField: source
     targetField: transport
+
+  - id: API005
+    description: Backend endpoints must exist in the API contract
+    scope: check
+    select:
+      fact: backend-endpoint
+      repositoryRoles:
+        - field: repositoryId
+          role: api-provider
+    assert:
+      - field: operationKey
+        memberOf:
+          fact: contract-operation
+          field: operationKey
+          repositoryRoles:
+            - field: repositoryId
+              role: api-contract
+        message: JAX-RS endpoint is absent from the API contract
+    sourceField: source
+    targetField: operationKey
 
   - id: PLAN001
     description: Planned operation must exist in the API contract
