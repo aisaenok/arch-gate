@@ -9,9 +9,20 @@ import type {
   RuleSelector,
   Violation
 } from "./model.js";
-import { evaluateCondition } from "./conditions.js";
+import {
+  evaluateCondition,
+  relatedMemberMatches
+} from "./conditions.js";
 import { relatedRepositoryIds } from "./relations.js";
 import { selectFacts } from "./selectors.js";
+
+type ConditionStatus = "pass" | "fail" | "partial";
+
+interface ConditionEvaluation {
+  status: ConditionStatus;
+  gaps?: CoverageGap[];
+  details?: Record<string, string>;
+}
 
 function ruleApplies(
   rule: RuleDefinition,
@@ -47,7 +58,9 @@ function repositoryIdsForSelector(
   return new Set(
     Object.values(model.repositories)
       .filter((repository) =>
-        roles.every((role) => repository.roles.includes(role.role))
+        roles.every((role) =>
+          repository.roles.includes(role.role)
+        )
       )
       .map((repository) => repository.id)
   );
@@ -58,7 +71,10 @@ function selectorCoverage(
   rule: RuleDefinition,
   selector: RuleSelector
 ): CoverageGap[] {
-  const repositoryIds = repositoryIdsForSelector(model, selector);
+  const repositoryIds = repositoryIdsForSelector(
+    model,
+    selector
+  );
   let evidence = model.evidence.filter(
     (item) => item.factKind === selector.fact
   );
@@ -109,7 +125,8 @@ function baseRequiredSelectors(
 
     selectors.push({
       fact: condition.memberOf.fact,
-      repositoryRoles: condition.memberOf.repositoryRoles,
+      repositoryRoles:
+        condition.memberOf.repositoryRoles,
       where: condition.memberOf.where
     });
   }
@@ -130,79 +147,212 @@ function baseCoverageGaps(
   return gaps;
 }
 
-function relationCoverageGaps(
+function evidenceIsComplete(
+  model: ArchitectureModel,
+  factKind: string,
+  repositoryId: string
+): boolean {
+  const evidence = model.evidence.filter(
+    (item) =>
+      item.factKind === factKind &&
+      item.repositoryId === repositoryId
+  );
+
+  return (
+    evidence.length > 0 &&
+    evidence.every((item) => item.status === "complete")
+  );
+}
+
+function evidenceGap(
+  model: ArchitectureModel,
+  rule: RuleDefinition,
+  factKind: string,
+  repositoryId: string
+): CoverageGap {
+  const evidence = model.evidence.filter(
+    (item) =>
+      item.factKind === factKind &&
+      item.repositoryId === repositoryId
+  );
+
+  if (evidence.length === 0) {
+    return {
+      rule: rule.id,
+      fact: factKind,
+      repositoryId,
+      message:
+        `No analyzer evidence exists for relation-scoped fact "${factKind}" in repository "${repositoryId}".`
+    };
+  }
+
+  const nonComplete = evidence.find(
+    (item) => item.status !== "complete"
+  );
+
+  return {
+    rule: rule.id,
+    fact: factKind,
+    repositoryId,
+    message:
+      nonComplete?.message ??
+      `Evidence for relation-scoped fact "${factKind}" is incomplete.`
+  };
+}
+
+function invertStatus(
+  status: ConditionStatus,
+  not: boolean | undefined
+): ConditionStatus {
+  if (!not || status === "partial") return status;
+  return status === "pass" ? "fail" : "pass";
+}
+
+function relationCondition(
   model: ArchitectureModel,
   rule: RuleDefinition,
   fact: Fact,
   condition: RuleCondition
-): CoverageGap[] {
+): ConditionEvaluation | undefined {
   const selector = condition.memberOf;
   const relation = selector?.repositoryRelation;
 
-  if (!selector || !relation) return [];
+  if (!selector || !relation) return undefined;
 
-  const related = relatedRepositoryIds(model, fact, relation);
+  const related = relatedRepositoryIds(
+    model,
+    fact,
+    relation
+  );
+
   if (!related) {
-    return [
-      {
-        rule: rule.id,
-        fact: selector.fact,
-        message:
-          `Fact "${fact.kind}" does not contain repository field "${relation.currentField}" required by relation "${relation.type}".`
-      }
-    ];
+    return {
+      status: "partial",
+      gaps: [
+        {
+          rule: rule.id,
+          fact: selector.fact,
+          message:
+            `Fact "${fact.kind}" does not contain repository field "${relation.currentField}" required by relation "${relation.type}".`
+        }
+      ]
+    };
   }
 
   if (related.size === 0) {
-    const currentRepository = fact[relation.currentField];
-    return [
-      {
-        rule: rule.id,
-        fact: selector.fact,
-        repositoryId:
-          typeof currentRepository === "string"
-            ? currentRepository
-            : undefined,
-        message:
-          `No ${relation.direction ?? "outgoing"} repository relation "${relation.type}" is configured for "${String(currentRepository)}".`
-      }
-    ];
+    const currentRepository =
+      fact[relation.currentField];
+
+    return {
+      status: "partial",
+      gaps: [
+        {
+          rule: rule.id,
+          fact: selector.fact,
+          repositoryId:
+            typeof currentRepository === "string"
+              ? currentRepository
+              : undefined,
+          message:
+            `No ${relation.direction ?? "outgoing"} repository relation "${relation.type}" is configured for "${String(currentRepository)}".`
+        }
+      ]
+    };
   }
 
-  const gaps: CoverageGap[] = [];
+  const { matching } = relatedMemberMatches(
+    model,
+    fact,
+    condition.field,
+    selector
+  );
+  const quantifier = relation.quantifier ?? "any";
 
-  for (const repositoryId of related) {
-    const evidence = model.evidence.filter(
-      (item) =>
-        item.factKind === selector.fact &&
-        item.repositoryId === repositoryId
+  let status: ConditionStatus;
+  let unknown = new Set<string>();
+  let missing = new Set<string>();
+
+  if (quantifier === "any") {
+    if (matching.size > 0) {
+      status = "pass";
+    } else {
+      unknown = new Set(
+        [...related].filter(
+          (repositoryId) =>
+            !evidenceIsComplete(
+              model,
+              selector.fact,
+              repositoryId
+            )
+        )
+      );
+
+      status =
+        unknown.size > 0 ? "partial" : "fail";
+      missing = new Set(related);
+    }
+  } else {
+    missing = new Set(
+      [...related].filter(
+        (repositoryId) =>
+          !matching.has(repositoryId)
+      )
     );
 
-    if (evidence.length === 0) {
-      gaps.push({
-        rule: rule.id,
-        fact: selector.fact,
-        repositoryId,
-        message:
-          `No analyzer evidence exists for relation-scoped fact "${selector.fact}" in repository "${repositoryId}".`
-      });
-      continue;
-    }
+    if (missing.size === 0) {
+      status = "pass";
+    } else {
+      unknown = new Set(
+        [...missing].filter(
+          (repositoryId) =>
+            !evidenceIsComplete(
+              model,
+              selector.fact,
+              repositoryId
+            )
+        )
+      );
 
-    for (const item of evidence) {
-      if (item.status === "complete") continue;
-      gaps.push({
-        rule: rule.id,
-        fact: selector.fact,
-        repositoryId,
-        message:
-          item.message ??
-          `Evidence for relation-scoped fact "${selector.fact}" is ${item.status}.`
-      });
+      const provenMissing = [...missing].filter(
+        (repositoryId) =>
+          !unknown.has(repositoryId)
+      );
+
+      status =
+        provenMissing.length > 0
+          ? "fail"
+          : "partial";
     }
   }
 
-  return gaps;
+  const finalStatus = invertStatus(
+    status,
+    condition.not
+  );
+
+  if (finalStatus === "partial") {
+    return {
+      status: "partial",
+      gaps: [...unknown].map((repositoryId) =>
+        evidenceGap(
+          model,
+          rule,
+          selector.fact,
+          repositoryId
+        )
+      )
+    };
+  }
+
+  return {
+    status: finalStatus,
+    details: {
+      quantifier,
+      relatedRepositories: [...related].join(","),
+      matchingRepositories: [...matching].join(","),
+      missingRepositories: [...missing].join(",")
+    }
+  };
 }
 
 function addUniqueGaps(
@@ -213,6 +363,7 @@ function addUniqueGaps(
   for (const gap of gaps) {
     const key =
       `${gap.rule}|${gap.fact}|${gap.repositoryId ?? ""}|${gap.message}`;
+
     if (seen.has(key)) continue;
     seen.add(key);
     target.push(gap);
@@ -241,23 +392,56 @@ export function evaluateRules(
 
     for (const fact of facts) {
       for (const condition of rule.assert) {
-        const conditionGaps = relationCoverageGaps(
+        const relationEvaluation = relationCondition(
           model,
           rule,
           fact,
           condition
         );
 
-        if (conditionGaps.length > 0) {
-          addUniqueGaps(gaps, seenGaps, conditionGaps);
+        if (relationEvaluation) {
+          if (relationEvaluation.status === "partial") {
+            addUniqueGaps(
+              gaps,
+              seenGaps,
+              relationEvaluation.gaps ?? []
+            );
+            continue;
+          }
+
+          if (relationEvaluation.status === "pass") {
+            continue;
+          }
+
+          violations.push({
+            rule: rule.id,
+            message:
+              condition.message ?? rule.description,
+            source: factField(
+              fact,
+              rule.sourceField
+            ),
+            target: factField(
+              fact,
+              rule.targetField
+            ),
+            details: {
+              fact: fact.kind,
+              field: condition.field,
+              ...(relationEvaluation.details ?? {})
+            }
+          });
           continue;
         }
 
-        if (evaluateCondition(model, fact, condition)) continue;
+        if (evaluateCondition(model, fact, condition)) {
+          continue;
+        }
 
         violations.push({
           rule: rule.id,
-          message: condition.message ?? rule.description,
+          message:
+            condition.message ?? rule.description,
           source: factField(fact, rule.sourceField),
           target: factField(fact, rule.targetField),
           details: {

@@ -177,6 +177,16 @@ function validateMemberOf(
       );
     }
 
+    if (
+      relation.quantifier !== undefined &&
+      relation.quantifier !== "any" &&
+      relation.quantifier !== "all"
+    ) {
+      throw new Error(
+        `${context} repositoryRelation.quantifier must be any or all`
+      );
+    }
+
     assertFactField(
       currentFact,
       relation.currentField,
