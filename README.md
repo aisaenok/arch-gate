@@ -96,14 +96,27 @@ repositoryRelation:
   currentField: repositoryId
   candidateField: repositoryId
   direction: outgoing
+  quantifier: all
 ```
 
 This prevents a contract operation from being accepted merely because some unrelated
 repository with role `api-provider` implements the same endpoint.
 
-If a relation-scoped rule has no matching topology edge, or the related repository
-does not have sufficient analyzer evidence, the result is `PARTIAL` rather than a
-guessed PASS/FAIL.
+The quantifier controls multi-repository semantics:
+
+- `any` — at least one related repository must contain the matching fact;
+- `all` — every related repository must contain the matching fact.
+
+The default is `any` for backward compatibility.
+
+Evidence is evaluated against the quantifier rather than blindly against every related
+repository. For example, `any` becomes PASS as soon as one related repository proves
+the match, even if another alternative is unavailable. Conversely, `all` is FAIL
+when a completely analyzed related repository is known to miss the fact, and PARTIAL
+when the only missing repositories have incomplete evidence.
+
+If a relation-scoped rule has no matching topology edge, the result is `PARTIAL`
+rather than a guessed PASS/FAIL.
 
 ## Project policy
 

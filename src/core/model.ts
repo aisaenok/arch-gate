@@ -6,6 +6,7 @@ export type FactValue = string | number | boolean | null;
 export type EvidenceStatus = "complete" | "partial" | "unavailable";
 export type GateStatus = "pass" | "fail" | "partial";
 export type RepositoryRelationDirection = "outgoing" | "incoming";
+export type RepositoryRelationQuantifier = "any" | "all";
 
 interface RawRepositoryBase {
   type: RepositoryType;
@@ -65,6 +66,7 @@ export interface RepositoryRelationMatch {
   currentField: string;
   candidateField: string;
   direction?: RepositoryRelationDirection;
+  quantifier?: RepositoryRelationQuantifier;
 }
 
 export interface MemberOfSelector {

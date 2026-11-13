@@ -77,3 +77,46 @@ rules:
     /unknown repository relation type "implementd-by"/
   );
 });
+
+
+test("rejects unknown repository relation quantifier", async () => {
+  const file = await configFile(`
+repositories:
+  contracts:
+    type: openapi
+    root: .
+    roles: [api-contract]
+    openapi: openapi.yaml
+
+  backend:
+    type: java
+    root: .
+    roles: [api-provider]
+
+relations:
+  - type: implemented-by
+    from: contracts
+    to: backend
+
+rules:
+  - id: Q001
+    description: bad quantifier
+    select:
+      fact: contract-operation
+    assert:
+      - field: operationKey
+        memberOf:
+          fact: backend-endpoint
+          field: operationKey
+          repositoryRelation:
+            type: implemented-by
+            currentField: repositoryId
+            candidateField: repositoryId
+            quantifier: every
+`);
+
+  await assert.rejects(
+    () => loadConfig(file),
+    /repositoryRelation.quantifier must be any or all/
+  );
+});
