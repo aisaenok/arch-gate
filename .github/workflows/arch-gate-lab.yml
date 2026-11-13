@@ -33,6 +33,22 @@ jobs:
       - name: Check valid monorepo
         run: npm run arch-gate -- check --config ./lab/monorepo/arch-gate.yml
 
+      - name: Reject direct HTTP runtime usage
+        shell: bash
+        run: |
+          if npm run arch-gate -- check --config ./lab/monorepo/arch-gate.invalid-http.yml; then
+            echo "Expected invalid HTTP runtime scenario to fail"
+            exit 1
+          fi
+
+      - name: Reject manual wire DTO
+        shell: bash
+        run: |
+          if npm run arch-gate -- check --config ./lab/monorepo/arch-gate.invalid-dto.yml; then
+            echo "Expected invalid DTO runtime scenario to fail"
+            exit 1
+          fi
+
       - name: Check valid architecture intent
         run: npm run arch-gate -- plan ./lab/monorepo/plans/valid.json --config ./lab/monorepo/arch-gate.yml
 
