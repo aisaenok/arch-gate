@@ -6,17 +6,27 @@ A small polyglot monorepo used to exercise the architecture gate against somethi
 
 ```text
 apps/
-  frontend/              TypeScript API consumer
+  frontend/
+    src/                         valid TypeScript API consumer
+    scenarios/
+      invalid-http/              direct axios usage
+      invalid-dto/               hand-written contract DTO
+
 packages/
-  api-contracts/         OpenAPI source of truth
+  api-contracts/                 OpenAPI source of truth
+
 services/
-  backend/               Java API provider
+  backend/                       Java API provider
+
 plans/
   valid.json
   invalid-custom-http.json
   invalid-wire-source.json
   invalid-operation.json
+
 arch-gate.yml
+arch-gate.invalid-http.yml
+arch-gate.invalid-dto.yml
 ```
 
 The intended dependency flow is:
@@ -33,33 +43,42 @@ backend
 
 The frontend has a separate domain model and mapper; only the wire model is generated/owned by the API contract.
 
-## Run from repository root
+## Runtime checks
+
+From repository root:
 
 ```bash
 npm install
 npm test
 
+# expected PASS
 npm run arch-gate -- check --config ./lab/monorepo/arch-gate.yml
 
+# expected FAIL: API001
+npm run arch-gate -- check --config ./lab/monorepo/arch-gate.invalid-http.yml
+
+# expected FAIL: API002
+npm run arch-gate -- check --config ./lab/monorepo/arch-gate.invalid-dto.yml
+```
+
+## Plan checks
+
+```bash
+# expected PASS
 npm run arch-gate -- plan ./lab/monorepo/plans/valid.json \
   --config ./lab/monorepo/arch-gate.yml
 
+# expected FAIL: PLAN002
 npm run arch-gate -- plan ./lab/monorepo/plans/invalid-custom-http.json \
   --config ./lab/monorepo/arch-gate.yml
 
+# expected FAIL: PLAN003 + PLAN004
 npm run arch-gate -- plan ./lab/monorepo/plans/invalid-wire-source.json \
   --config ./lab/monorepo/arch-gate.yml
 
+# expected FAIL: PLAN001
 npm run arch-gate -- plan ./lab/monorepo/plans/invalid-operation.json \
   --config ./lab/monorepo/arch-gate.yml
 ```
 
-Expected results:
-
-- `check` passes on the current code;
-- `valid.json` passes;
-- `invalid-custom-http.json` fails `PLAN002`;
-- `invalid-wire-source.json` fails `PLAN003` and `PLAN004`;
-- `invalid-operation.json` fails `PLAN001`.
-
-This lab is intentionally kept small so we can mutate it while developing the DSL and immediately see whether a rule is expressive enough or produces useful diagnostics.
+The lab is intentionally small and mutable: its purpose is to expose weak spots in the analyzer/fact model/DSL quickly, not to simulate a full production system.
