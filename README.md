@@ -79,9 +79,19 @@ A typical policy can now express:
 
 - consumer HTTP must be reachable only through generated runtime;
 - request types crossing the generated client boundary need contract provenance;
-- every statically identified HTTP operation inside generated runtime must exist in OpenAPI;
-- every extracted JAX-RS backend endpoint must exist in OpenAPI;
+- generated frontend operations must exist in OpenAPI;
+- backend JAX-RS endpoints must exist in OpenAPI;
+- every OpenAPI operation must also be implemented by the backend;
+- every OpenAPI operation must also be present in the generated frontend runtime;
 - planned API operations and wire types must be contract-backed.
+
+That lets a project enforce bidirectional contract completeness instead of only checking that implementation code does not drift outside the contract:
+
+```text
+generated frontend runtime  <->  OpenAPI  <->  backend endpoints
+```
+
+The reverse checks do not need engine-specific rule code. They are expressed with the same generic `memberOf` primitive used by the forward checks.
 
 ## Commands
 
@@ -101,5 +111,6 @@ This is still a PoC.
 - TypeScript resolution is compiler-based but not SCIP-based.
 - Cross-function value/data-flow is intentionally limited.
 - Java endpoint extraction currently supports explicitly configured JAX-RS repositories; Spring MVC is not implemented yet.
+- Repository-role matching is intentionally simple; multi-contract/multi-provider topologies will need explicit relationship scoping.
 - No baseline/diff/impact/why graph tooling yet.
 - The YAML DSL stays intentionally small; semantic complexity belongs in analyzers/facts, not in increasingly programmable YAML.
