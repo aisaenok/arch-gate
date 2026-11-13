@@ -1,13 +1,22 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { parse } from "yaml";
+import {
+  assertFactField,
+  assertKnownFactKind
+} from "../core/facts.js";
 import type {
+  JavaFramework,
+  MemberOfSelector,
   RawGateConfig,
   ResolvedGateConfig,
   ResolvedRepository,
   RuleCondition,
-  RuleDefinition
+  RuleDefinition,
+  RuleSelector
 } from "../core/model.js";
+
+const JAVA_FRAMEWORKS = new Set<JavaFramework>(["jax-rs"]);
 
 function requireRoles(repositoryId: string, roles: unknown): string[] {
   if (!Array.isArray(roles) || roles.some((role) => typeof role !== "string")) {
@@ -17,7 +26,69 @@ function requireRoles(repositoryId: string, roles: unknown): string[] {
   return roles;
 }
 
-function validateCondition(ruleId: string, condition: RuleCondition): void {
+function requireJavaFrameworks(
+  repositoryId: string,
+  frameworks: unknown
+): JavaFramework[] {
+  if (frameworks === undefined) return [];
+
+  if (!Array.isArray(frameworks) || frameworks.some((item) => typeof item !== "string")) {
+    throw new Error(
+      `Java repository "${repositoryId}" must define frameworks as an array of strings`
+    );
+  }
+
+  for (const framework of frameworks) {
+    if (!JAVA_FRAMEWORKS.has(framework as JavaFramework)) {
+      throw new Error(
+        `Java repository "${repositoryId}" references unsupported framework "${framework}". Supported: ${[...JAVA_FRAMEWORKS].join(", ")}`
+      );
+    }
+  }
+
+  return frameworks as JavaFramework[];
+}
+
+function validateSelector(ruleId: string, selector: RuleSelector, context: string): void {
+  assertKnownFactKind(selector.fact, context);
+
+  for (const role of selector.repositoryRoles ?? []) {
+    assertFactField(selector.fact, role.field, context);
+  }
+
+  for (const condition of selector.where ?? []) {
+    assertFactField(selector.fact, condition.field, context);
+  }
+}
+
+function validateMemberOf(
+  ruleId: string,
+  currentFact: string,
+  selector: MemberOfSelector
+): void {
+  const context = `Rule "${ruleId}" memberOf`;
+  assertKnownFactKind(selector.fact, context);
+  assertFactField(selector.fact, selector.field, context);
+
+  for (const role of selector.repositoryRoles ?? []) {
+    assertFactField(selector.fact, role.field, context);
+  }
+
+  for (const condition of selector.where ?? []) {
+    assertFactField(selector.fact, condition.field, context);
+  }
+
+  if (selector.repositoryMatch) {
+    assertFactField(selector.fact, selector.repositoryMatch.sourceField, context);
+    assertFactField(currentFact, selector.repositoryMatch.currentField, context);
+  }
+}
+
+function validateCondition(
+  ruleId: string,
+  factKind: string,
+  condition: RuleCondition
+): void {
   const operators = [
     Object.prototype.hasOwnProperty.call(condition, "equals"),
     typeof condition.hasRole === "string",
@@ -26,7 +97,15 @@ function validateCondition(ruleId: string, condition: RuleCondition): void {
   ].filter(Boolean).length;
 
   if (operators !== 1) {
-    throw new Error(`Rule "${ruleId}" condition for field "${condition.field}" must define exactly one operator`);
+    throw new Error(
+      `Rule "${ruleId}" condition for field "${condition.field}" must define exactly one operator`
+    );
+  }
+
+  assertFactField(factKind, condition.field, `Rule "${ruleId}"`);
+
+  if (condition.memberOf) {
+    validateMemberOf(ruleId, factKind, condition.memberOf);
   }
 }
 
@@ -35,11 +114,23 @@ function validateRule(rule: RuleDefinition): void {
     throw new Error("Every rule must define id, description and select.fact");
   }
 
+  validateSelector(rule.id, rule.select, `Rule "${rule.id}" selector`);
+
   if (!Array.isArray(rule.assert) || rule.assert.length === 0) {
     throw new Error(`Rule "${rule.id}" must define at least one assertion`);
   }
 
-  for (const condition of rule.assert) validateCondition(rule.id, condition);
+  for (const condition of rule.assert) {
+    validateCondition(rule.id, rule.select.fact, condition);
+  }
+
+  if (rule.sourceField) {
+    assertFactField(rule.select.fact, rule.sourceField, `Rule "${rule.id}" sourceField`);
+  }
+
+  if (rule.targetField) {
+    assertFactField(rule.select.fact, rule.targetField, `Rule "${rule.id}" targetField`);
+  }
 }
 
 export async function loadConfig(configFile: string): Promise<ResolvedGateConfig> {
@@ -70,9 +161,15 @@ export async function loadConfig(configFile: string): Promise<ResolvedGateConfig
         root,
         roles,
         sourceDir: path.resolve(root, repository.sourceDir ?? "src"),
-        generatedRuntimeDirs: (repository.generatedRuntimeDirs ?? []).map((dir) => path.resolve(root, dir)),
-        allowDirectHttpDirs: (repository.allowDirectHttpDirs ?? []).map((dir) => path.resolve(root, dir)),
-        allowManualContractTypeDirs: (repository.allowManualContractTypeDirs ?? []).map((dir) => path.resolve(root, dir)),
+        generatedRuntimeDirs: (repository.generatedRuntimeDirs ?? []).map((dir) =>
+          path.resolve(root, dir)
+        ),
+        allowDirectHttpDirs: (repository.allowDirectHttpDirs ?? []).map((dir) =>
+          path.resolve(root, dir)
+        ),
+        allowManualContractTypeDirs: (
+          repository.allowManualContractTypeDirs ?? []
+        ).map((dir) => path.resolve(root, dir)),
         httpModules: repository.httpModules ?? ["axios"]
       };
       continue;
@@ -94,12 +191,23 @@ export async function loadConfig(configFile: string): Promise<ResolvedGateConfig
     }
 
     if (repository.type === "java") {
-      repositories[id] = { id, type: "java", root, roles };
+      repositories[id] = {
+        id,
+        type: "java",
+        root,
+        roles,
+        sourceDirs: (repository.sourceDirs ?? ["."]).map((dir) =>
+          path.resolve(root, dir)
+        ),
+        frameworks: requireJavaFrameworks(id, repository.frameworks)
+      };
       continue;
     }
 
     const unsupported = repository as { type?: string };
-    throw new Error(`Unsupported repository type "${unsupported.type ?? "<missing>"}" for "${id}"`);
+    throw new Error(
+      `Unsupported repository type "${unsupported.type ?? "<missing>"}" for "${id}"`
+    );
   }
 
   return {

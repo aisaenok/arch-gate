@@ -34,7 +34,9 @@ const config: ResolvedGateConfig = {
       id: "backend",
       type: "java",
       root: path.join(root, "fixtures/backend"),
-      roles: ["api-provider"]
+      roles: ["api-provider"],
+      sourceDirs: [path.join(root, "fixtures/backend")],
+      frameworks: []
     }
   },
   rules: [
@@ -45,88 +47,122 @@ const config: ResolvedGateConfig = {
       select: {
         fact: "intent-api-call",
         repositoryRoles: [
-          { field: "consumerRepositoryId", role: "api-consumer" },
-          { field: "providerRepositoryId", role: "api-provider" }
+          {
+            field: "consumerRepositoryId",
+            role: "api-consumer"
+          },
+          {
+            field: "providerRepositoryId",
+            role: "api-provider"
+          }
         ]
       },
-      assert: [{
-        field: "operationId",
-        memberOf: {
-          fact: "contract-operation",
+      assert: [
+        {
           field: "operationId",
-          repositoryRoles: [{ field: "repositoryId", role: "api-contract" }]
+          memberOf: {
+            fact: "contract-operation",
+            field: "operationId",
+            repositoryRoles: [
+              {
+                field: "repositoryId",
+                role: "api-contract"
+              }
+            ]
+          }
         }
-      }]
+      ]
     },
     {
       id: "PLAN002",
       description: "generated runtime",
       scope: "plan",
       select: { fact: "intent-api-call" },
-      assert: [{ field: "via", equals: "generated-runtime" }]
+      assert: [
+        {
+          field: "via",
+          equals: "generated-runtime"
+        }
+      ]
     },
     {
       id: "PLAN003",
       description: "wire schema exists in source repository",
       scope: "plan",
       select: { fact: "intent-wire-type" },
-      assert: [{
-        field: "name",
-        memberOf: {
-          fact: "contract-schema",
+      assert: [
+        {
           field: "name",
-          repositoryMatch: {
-            sourceField: "repositoryId",
-            currentField: "sourceRepositoryId"
+          memberOf: {
+            fact: "contract-schema",
+            field: "name",
+            repositoryMatch: {
+              sourceField: "repositoryId",
+              currentField: "sourceRepositoryId"
+            }
           }
         }
-      }]
+      ]
     },
     {
       id: "PLAN004",
       description: "wire source is contract",
       scope: "plan",
       select: { fact: "intent-wire-type" },
-      assert: [{ field: "sourceRepositoryId", hasRole: "api-contract" }]
+      assert: [
+        {
+          field: "sourceRepositoryId",
+          hasRole: "api-contract"
+        }
+      ]
     }
   ]
 };
 
 test("accepts contract-first implementation intent", async () => {
-  const violations = await runPlan(config, {
-    apiCalls: [{
-      consumer: "frontend",
-      provider: "backend",
-      operationId: "getApplication",
-      via: "generated-runtime"
-    }],
-    wireTypes: [{
-      consumer: "frontend",
-      name: "ApplicationResponse",
-      source: "contracts"
-    }]
+  const result = await runPlan(config, {
+    apiCalls: [
+      {
+        consumer: "frontend",
+        provider: "backend",
+        operationId: "getApplication",
+        via: "generated-runtime"
+      }
+    ],
+    wireTypes: [
+      {
+        consumer: "frontend",
+        name: "ApplicationResponse",
+        source: "contracts"
+      }
+    ]
   });
 
-  assert.deepEqual(violations, []);
+  assert.equal(result.status, "pass");
+  assert.deepEqual(result.violations, []);
 });
 
-test("rejects implementation intent only because YAML-like declarations fail", async () => {
-  const violations = await runPlan(config, {
-    apiCalls: [{
-      consumer: "frontend",
-      provider: "backend",
-      operationId: "getApplication",
-      via: "custom-http"
-    }],
-    wireTypes: [{
-      consumer: "frontend",
-      name: "ApplicationResponse",
-      source: "frontend"
-    }]
+test("rejects invalid implementation intent", async () => {
+  const result = await runPlan(config, {
+    apiCalls: [
+      {
+        consumer: "frontend",
+        provider: "backend",
+        operationId: "getApplication",
+        via: "custom-http"
+      }
+    ],
+    wireTypes: [
+      {
+        consumer: "frontend",
+        name: "ApplicationResponse",
+        source: "frontend"
+      }
+    ]
   });
 
   assert.deepEqual(
-    new Set(violations.map((violation) => violation.rule)),
+    new Set(result.violations.map((violation) => violation.rule)),
     new Set(["PLAN002", "PLAN003", "PLAN004"])
   );
 });

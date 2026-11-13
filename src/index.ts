@@ -4,7 +4,10 @@ import { loadIntent } from "./analyzers/intent.js";
 import { loadConfig } from "./config/load.js";
 import { runCheck, runPlan } from "./engine.js";
 import { report } from "./report.js";
-import type { OutputFormat } from "./core/model.js";
+import type {
+  EvaluationResult,
+  OutputFormat
+} from "./core/model.js";
 
 interface CliOptions {
   command: "check" | "plan";
@@ -14,7 +17,9 @@ interface CliOptions {
 }
 
 function usage(): never {
-  console.error(`Usage:\n  arch-gate check --config <file> [--format text|json]\n  arch-gate plan <intent.json> --config <file> [--format text|json]`);
+  console.error(
+    `Usage:\n  arch-gate check --config <file> [--format text|json]\n  arch-gate plan <intent.json> --config <file> [--format text|json]`
+  );
   process.exit(2);
 }
 
@@ -28,34 +33,55 @@ function parseArgs(argv: string[]): CliOptions {
 
   for (let i = 0; i < rest.length; i += 1) {
     const arg = rest[i];
-    if (arg === "--config") configFile = rest[++i];
-    else if (arg === "--format") {
+    if (arg === "--config") {
+      configFile = rest[++i];
+    } else if (arg === "--format") {
       const value = rest[++i];
       if (value !== "text" && value !== "json") usage();
       format = value;
-    } else if (command === "plan" && !arg.startsWith("-") && !intentFile) {
+    } else if (
+      command === "plan" &&
+      !arg.startsWith("-") &&
+      !intentFile
+    ) {
       intentFile = arg;
-    } else usage();
+    } else {
+      usage();
+    }
   }
 
-  if (!configFile || (command === "plan" && !intentFile)) usage();
+  if (!configFile || (command === "plan" && !intentFile)) {
+    usage();
+  }
+
   return { command, configFile, intentFile, format };
+}
+
+function exitCode(result: EvaluationResult): number {
+  if (result.status === "pass") return 0;
+  if (result.status === "fail") return 1;
+  return 3;
 }
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   const config = await loadConfig(options.configFile);
 
-  const violations = options.command === "check"
-    ? await runCheck(config)
-    : await runPlan(config, await loadIntent(path.resolve(options.intentFile!)));
+  const result =
+    options.command === "check"
+      ? await runCheck(config)
+      : await runPlan(
+          config,
+          await loadIntent(path.resolve(options.intentFile!))
+        );
 
-  report(violations, options.format);
-  process.exitCode = violations.length === 0 ? 0 : 1;
+  report(result, options.format);
+  process.exitCode = exitCode(result);
 }
 
 main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
+  const message =
+    error instanceof Error ? error.message : String(error);
   console.error(`Architecture Gate error: ${message}`);
   process.exitCode = 2;
 });

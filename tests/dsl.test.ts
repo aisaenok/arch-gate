@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { evaluateRules } from "../src/core/engine.js";
-import type { ArchitectureModel, RuleDefinition } from "../src/core/model.js";
+import type {
+  ArchitectureModel,
+  RuleDefinition
+} from "../src/core/model.js";
 
 const model: ArchitectureModel = {
   repositories: {
@@ -9,42 +12,75 @@ const model: ArchitectureModel = {
       id: "consumer",
       type: "java",
       root: "/consumer",
-      roles: ["consumer"]
+      roles: ["consumer"],
+      sourceDirs: ["/consumer"],
+      frameworks: []
     },
     catalog: {
       id: "catalog",
       type: "java",
       root: "/catalog",
-      roles: ["catalog"]
+      roles: ["catalog"],
+      sourceDirs: ["/catalog"],
+      frameworks: []
     }
   },
   facts: [
-    { kind: "usage", repositoryId: "consumer", name: "A", allowed: false },
-    { kind: "catalog-item", repositoryId: "catalog", name: "A" }
+    {
+      kind: "usage",
+      repositoryId: "consumer",
+      name: "A",
+      allowed: false
+    },
+    {
+      kind: "catalog-item",
+      repositoryId: "catalog",
+      name: "A"
+    }
+  ],
+  evidence: [
+    {
+      repositoryId: "consumer",
+      producer: "test",
+      factKind: "usage",
+      status: "complete"
+    },
+    {
+      repositoryId: "catalog",
+      producer: "test",
+      factKind: "catalog-item",
+      status: "complete"
+    }
   ]
 };
 
-test("a new project rule can be expressed without adding a TypeScript rule module", () => {
+test("generic engine can evaluate arbitrary in-memory facts", () => {
   const rule: RuleDefinition = {
     id: "CUSTOM001",
     description: "custom declarative rule",
     scope: "check",
     select: {
       fact: "usage",
-      repositoryRoles: [{ field: "repositoryId", role: "consumer" }]
+      repositoryRoles: [
+        { field: "repositoryId", role: "consumer" }
+      ]
     },
-    assert: [{
-      field: "name",
-      not: true,
-      memberOf: {
-        fact: "catalog-item",
+    assert: [
+      {
         field: "name",
-        repositoryRoles: [{ field: "repositoryId", role: "catalog" }]
+        not: true,
+        memberOf: {
+          fact: "catalog-item",
+          field: "name",
+          repositoryRoles: [
+            { field: "repositoryId", role: "catalog" }
+          ]
+        }
       }
-    }]
+    ]
   };
 
-  const violations = evaluateRules(model, [rule], "check");
-  assert.equal(violations.length, 1);
-  assert.equal(violations[0]?.rule, "CUSTOM001");
+  const result = evaluateRules(model, [rule], "check");
+  assert.equal(result.violations.length, 1);
+  assert.equal(result.violations[0]?.rule, "CUSTOM001");
 });

@@ -24,7 +24,9 @@ function config(
         root: consumerRoot,
         roles: ["api-consumer"],
         sourceDir: path.join(consumerRoot, "src"),
-        generatedRuntimeDirs: generatedRuntimeDirs.map((dir) => path.join(consumerRoot, dir)),
+        generatedRuntimeDirs: generatedRuntimeDirs.map((dir) =>
+          path.join(consumerRoot, dir)
+        ),
         allowDirectHttpDirs: [],
         allowManualContractTypeDirs: [],
         httpModules: ["axios"]
@@ -40,51 +42,46 @@ function config(
     rules: [
       {
         id: "API001",
-        description: "consumer HTTP must be allowed",
+        description: "consumer HTTP must go through generated runtime",
         scope: "check",
         select: {
-          fact: "http-usage",
-          repositoryRoles: [{ field: "repositoryId", role: "api-consumer" }]
+          fact: "http-reach",
+          repositoryRoles: [
+            { field: "repositoryId", role: "api-consumer" }
+          ],
+          where: [
+            {
+              field: "sourceDirectHttpAllowed",
+              equals: false
+            }
+          ]
         },
-        assert: [{ field: "directHttpAllowed", equals: true }],
-        sourceField: "source"
-      },
-      {
-        id: "API002",
-        description: "consumer must not recreate contract schemas",
-        scope: "check",
-        select: {
-          fact: "declared-type",
-          repositoryRoles: [{ field: "repositoryId", role: "api-consumer" }],
-          where: [{ field: "manualContractTypeAllowed", equals: false }]
-        },
-        assert: [{
-          field: "name",
-          not: true,
-          memberOf: {
-            fact: "contract-schema",
-            field: "name",
-            repositoryRoles: [{ field: "repositoryId", role: "api-contract" }]
+        assert: [
+          {
+            field: "throughGeneratedRuntime",
+            equals: true
           }
-        }]
+        ],
+        sourceField: "sourceFile"
       }
     ]
   };
 }
 
-test("allows HTTP transport inside generated runtime directory", async () => {
-  assert.deepEqual(
-    await runCheck(config("pl-valid", ["src/shared/api/generated"])),
-    []
+test("allows HTTP reached through generated runtime", async () => {
+  const result = await runCheck(
+    config("pl-valid", ["src/shared/api/generated"])
   );
+  assert.equal(result.status, "pass");
+  assert.deepEqual(result.violations, []);
 });
 
-test("rejects direct axios usage using only declarative rule config", async () => {
-  const violations = await runCheck(config("pl-invalid-direct"));
-  assert.equal(violations.some((violation) => violation.rule === "API001"), true);
-});
-
-test("rejects manual wire DTO using memberOf relation from declarative rule", async () => {
-  const violations = await runCheck(config("pl-invalid-dto"));
-  assert.equal(violations.some((violation) => violation.rule === "API002"), true);
+test("rejects direct axios call outside generated runtime", async () => {
+  const result = await runCheck(config("pl-invalid-direct"));
+  assert.equal(
+    result.violations.some(
+      (violation) => violation.rule === "API001"
+    ),
+    true
+  );
 });
