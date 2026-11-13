@@ -55,7 +55,7 @@ Intent produces:
 - `intent-api-call`
 - `intent-wire-type`
 
-Java endpoint facts are registered but currently reported as unavailable evidence. A rule that requires `backend-endpoint` therefore produces `PARTIAL`, never a false `PASS`.
+Java repositories configured with `frameworks: [jax-rs]` produce `backend-endpoint` facts from parsed Java syntax trees. The analyzer combines class/method `@Path` values with `@GET/@POST/@PUT/@PATCH/@DELETE/@HEAD/@OPTIONS` and normalizes them to the same `METHOD + path` key used by OpenAPI. If Java syntax cannot be parsed, endpoint evidence becomes `PARTIAL` rather than producing a false green result.
 
 ## TypeScript semantics
 
@@ -80,6 +80,7 @@ A typical policy can now express:
 - consumer HTTP must be reachable only through generated runtime;
 - request types crossing the generated client boundary need contract provenance;
 - every statically identified HTTP operation inside generated runtime must exist in OpenAPI;
+- every extracted JAX-RS backend endpoint must exist in OpenAPI;
 - planned API operations and wire types must be contract-backed.
 
 ## Commands
@@ -99,6 +100,6 @@ This is still a PoC.
 
 - TypeScript resolution is compiler-based but not SCIP-based.
 - Cross-function value/data-flow is intentionally limited.
-- Java endpoint extraction is not implemented yet and is surfaced as PARTIAL evidence.
+- Java endpoint extraction currently supports explicitly configured JAX-RS repositories; Spring MVC is not implemented yet.
 - No baseline/diff/impact/why graph tooling yet.
 - The YAML DSL stays intentionally small; semantic complexity belongs in analyzers/facts, not in increasingly programmable YAML.
