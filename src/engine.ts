@@ -2,7 +2,9 @@ import { analyzeOpenApiRepository } from "./analyzers/openapi.js";
 import { analyzeTypeScriptRepository } from "./analyzers/typescript.js";
 import type {
   ArchitectureModel,
+  ContractCatalog,
   ResolvedGateConfig,
+  TypeScriptFacts,
   Violation
 } from "./core/model.js";
 import { checkApiThroughGenerated } from "./rules/api-through-generated.js";
@@ -17,8 +19,8 @@ export async function buildArchitectureModel(
   options: BuildModelOptions = {}
 ): Promise<ArchitectureModel> {
   const analyzeTypeScript = options.analyzeTypeScript ?? true;
-  const contracts = [];
-  const typescript = [];
+  const contracts: ContractCatalog[] = [];
+  const typescript: TypeScriptFacts[] = [];
 
   for (const repository of Object.values(config.repositories)) {
     if (repository.type === "openapi") {
