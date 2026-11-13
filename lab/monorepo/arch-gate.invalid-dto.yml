@@ -1,0 +1,63 @@
+repositories:
+  frontend:
+    type: typescript
+    root: ./apps/frontend
+    roles: [api-consumer]
+    sourceDir: scenarios/invalid-dto/src
+    generatedRuntimeDirs:
+      - src/shared/api/generated
+    allowDirectHttpDirs: []
+    allowManualContractTypeDirs: []
+    httpModules:
+      - axios
+
+  contracts:
+    type: openapi
+    root: ./packages/api-contracts
+    roles: [api-contract]
+    openapi: openapi.yaml
+
+  backend:
+    type: java
+    root: ./services/backend
+    roles: [api-provider]
+
+rules:
+  - id: API001
+    description: API consumer must use generated runtime for HTTP transport
+    scope: check
+    select:
+      fact: http-usage
+      repositoryRoles:
+        - field: repositoryId
+          role: api-consumer
+    assert:
+      - field: directHttpAllowed
+        equals: true
+        message: Direct HTTP transport is forbidden outside generated runtime
+    sourceField: source
+    targetField: target
+
+  - id: API002
+    description: Wire DTO must come from the API contract
+    scope: check
+    select:
+      fact: declared-type
+      repositoryRoles:
+        - field: repositoryId
+          role: api-consumer
+      where:
+        - field: manualContractTypeAllowed
+          equals: false
+    assert:
+      - field: name
+        not: true
+        memberOf:
+          fact: contract-schema
+          field: name
+          repositoryRoles:
+            - field: repositoryId
+              role: api-contract
+        message: Consumer manually declares a type owned by the API contract
+    sourceField: source
+    targetField: name
