@@ -96,6 +96,7 @@ rules:
             currentField: repositoryId
             candidateField: repositoryId
             direction: incoming
+            quantifier: any
         message: Generated runtime calls an HTTP operation absent from its related API contract
     sourceField: source
     targetField: operationKey
@@ -139,6 +140,7 @@ rules:
             currentField: repositoryId
             candidateField: repositoryId
             direction: incoming
+            quantifier: any
         message: JAX-RS endpoint is absent from its related API contract
     sourceField: source
     targetField: operationKey
@@ -164,7 +166,8 @@ rules:
             currentField: repositoryId
             candidateField: repositoryId
             direction: outgoing
-        message: API contract operation has no implementation in its related backend
+            quantifier: all
+        message: API contract operation has no implementation in every related backend
     sourceField: operationId
     targetField: operationKey
 
@@ -194,7 +197,8 @@ rules:
             currentField: repositoryId
             candidateField: repositoryId
             direction: outgoing
-        message: API contract operation has no generated call in its related frontend
+            quantifier: all
+        message: API contract operation has no generated call in every related frontend
     sourceField: operationId
     targetField: operationKey
 
@@ -221,6 +225,7 @@ rules:
             currentField: providerRepositoryId
             candidateField: repositoryId
             direction: incoming
+            quantifier: any
     targetField: operationId
 
   - id: PLAN002
