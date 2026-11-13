@@ -1,7 +1,9 @@
 import type {
   ArchitectureModel,
   Fact,
-  RepositoryRelationMatch
+  RepositoryRelationDirection,
+  RepositoryRelationMatch,
+  RepositoryRelationStep
 } from "./model.js";
 
 function repositoryId(
@@ -10,6 +12,64 @@ function repositoryId(
 ): string | undefined {
   const value = fact[field];
   return typeof value === "string" ? value : undefined;
+}
+
+function steps(
+  match: RepositoryRelationMatch
+): RepositoryRelationStep[] {
+  if (match.path) return match.path;
+
+  if (!match.type) return [];
+
+  return [
+    {
+      type: match.type,
+      direction: match.direction
+    }
+  ];
+}
+
+function traverseStep(
+  model: ArchitectureModel,
+  repositories: Set<string>,
+  step: RepositoryRelationStep
+): Set<string> {
+  const direction: RepositoryRelationDirection =
+    step.direction ?? "outgoing";
+  const next = new Set<string>();
+
+  for (const relation of model.relations) {
+    if (relation.type !== step.type) continue;
+
+    if (
+      direction === "outgoing" &&
+      repositories.has(relation.from)
+    ) {
+      next.add(relation.to);
+    }
+
+    if (
+      direction === "incoming" &&
+      repositories.has(relation.to)
+    ) {
+      next.add(relation.from);
+    }
+  }
+
+  return next;
+}
+
+export function repositoryRelationDescription(
+  match: RepositoryRelationMatch
+): string {
+  return steps(match)
+    .map((step) => {
+      const direction = step.direction ?? "outgoing";
+      return direction === "outgoing"
+        ? `->${step.type}`
+        : `<-${step.type}`;
+    })
+    .join(" ");
 }
 
 export function relatedRepositoryIds(
@@ -23,28 +83,19 @@ export function relatedRepositoryIds(
   );
   if (!currentRepository) return undefined;
 
-  const direction = match.direction ?? "outgoing";
-  const ids = new Set<string>();
+  let repositories = new Set([currentRepository]);
 
-  for (const relation of model.relations) {
-    if (relation.type !== match.type) continue;
+  for (const step of steps(match)) {
+    repositories = traverseStep(
+      model,
+      repositories,
+      step
+    );
 
-    if (
-      direction === "outgoing" &&
-      relation.from === currentRepository
-    ) {
-      ids.add(relation.to);
-    }
-
-    if (
-      direction === "incoming" &&
-      relation.to === currentRepository
-    ) {
-      ids.add(relation.from);
-    }
+    if (repositories.size === 0) break;
   }
 
-  return ids;
+  return repositories;
 }
 
 export function repositoryRelationMatches(
@@ -53,7 +104,11 @@ export function repositoryRelationMatches(
   candidate: Fact,
   match: RepositoryRelationMatch
 ): boolean {
-  const related = relatedRepositoryIds(model, current, match);
+  const related = relatedRepositoryIds(
+    model,
+    current,
+    match
+  );
   if (!related) return false;
 
   const candidateRepository = repositoryId(
