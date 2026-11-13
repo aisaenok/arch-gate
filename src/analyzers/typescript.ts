@@ -308,7 +308,8 @@ function typeName(type: ts.Type, checker: ts.TypeChecker): string {
 function typeNodeReferencesGenerated(
   node: ts.TypeNode,
   checker: ts.TypeChecker,
-  generatedDirs: string[]
+  generatedDirs: string[],
+  seen = new Set<ts.Symbol>()
 ): boolean {
   if (ts.isTypeReferenceNode(node)) {
     const symbol = checker.getSymbolAtLocation(node.typeName);
@@ -316,22 +317,59 @@ function typeNodeReferencesGenerated(
       symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0
         ? checker.getAliasedSymbol(symbol)
         : symbol;
-    if (
-      target?.declarations?.some((declaration) =>
-        isInsideAny(declaration.getSourceFile().fileName, generatedDirs)
-      )
-    ) {
-      return true;
+
+    if (target && !seen.has(target)) {
+      seen.add(target);
+
+      if (
+        target.declarations?.some((declaration) =>
+          isInsideAny(declaration.getSourceFile().fileName, generatedDirs)
+        )
+      ) {
+        return true;
+      }
+
+      for (const declaration of target.declarations ?? []) {
+        if (
+          ts.isTypeAliasDeclaration(declaration) &&
+          typeNodeReferencesGenerated(
+            declaration.type,
+            checker,
+            generatedDirs,
+            seen
+          )
+        ) {
+          return true;
+        }
+      }
     }
   }
 
   let found = false;
   node.forEachChild((child) => {
     if (!found && ts.isTypeNode(child)) {
-      found = typeNodeReferencesGenerated(child, checker, generatedDirs);
+      found = typeNodeReferencesGenerated(
+        child,
+        checker,
+        generatedDirs,
+        seen
+      );
     }
   });
   return found;
+}
+
+function declarationTypeNode(
+  declaration: ts.Declaration
+): ts.TypeNode | undefined {
+  if (
+    ts.isVariableDeclaration(declaration) ||
+    ts.isParameter(declaration) ||
+    ts.isPropertyDeclaration(declaration)
+  ) {
+    return declaration.type;
+  }
+  return undefined;
 }
 
 function argumentHasContractProvenance(
@@ -354,14 +392,31 @@ function argumentHasContractProvenance(
 
   if (ts.isIdentifier(argument)) {
     const symbol = checker.getSymbolAtLocation(argument);
-    for (const declaration of symbol?.declarations ?? []) {
+    const declarations = symbol?.declarations ?? [];
+
+    for (const declaration of declarations) {
+      const typeNode = declarationTypeNode(declaration);
       if (
-        ts.isVariableDeclaration(declaration) &&
-        declaration.type &&
-        typeNodeReferencesGenerated(declaration.type, checker, generatedDirs)
+        typeNode &&
+        typeNodeReferencesGenerated(
+          typeNode,
+          checker,
+          generatedDirs
+        )
       ) {
         return true;
       }
+    }
+
+    // An inferred object value has no manually declared DTO type. The generated
+    // function signature still type-checks it at the boundary.
+    if (
+      declarations.some((declaration) => {
+        const typeNode = declarationTypeNode(declaration);
+        return typeNode === undefined;
+      })
+    ) {
+      return true;
     }
   }
 
