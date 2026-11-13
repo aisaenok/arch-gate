@@ -13,7 +13,10 @@ import {
   evaluateCondition,
   relatedMemberMatches
 } from "./conditions.js";
-import { relatedRepositoryIds } from "./relations.js";
+import {
+  relatedRepositoryIds,
+  repositoryRelationDescription
+} from "./relations.js";
 import { selectFacts } from "./selectors.js";
 
 type ConditionStatus = "pass" | "fail" | "partial";
@@ -233,7 +236,7 @@ function relationCondition(
           rule: rule.id,
           fact: selector.fact,
           message:
-            `Fact "${fact.kind}" does not contain repository field "${relation.currentField}" required by relation "${relation.type}".`
+            `Fact "${fact.kind}" does not contain repository field "${relation.currentField}" required by repository relation path "${repositoryRelationDescription(relation)}".`
         }
       ]
     };
@@ -254,7 +257,7 @@ function relationCondition(
               ? currentRepository
               : undefined,
           message:
-            `No ${relation.direction ?? "outgoing"} repository relation "${relation.type}" is configured for "${String(currentRepository)}".`
+            `Repository relation path "${repositoryRelationDescription(relation)}" reaches no repositories from "${String(currentRepository)}".`
         }
       ]
     };
