@@ -281,3 +281,94 @@ test("missing topology relation produces PARTIAL instead of guessing", () => {
   assert.equal(result.status, "partial");
   assert.equal(result.violations.length, 0);
 });
+
+
+test("plan operation is scoped to the contract related to its provider", () => {
+  const planRule: RuleDefinition = {
+    id: "PLAN_TOPO001",
+    description: "planned operation belongs to provider contract",
+    scope: "plan",
+    select: {
+      fact: "intent-api-call"
+    },
+    assert: [
+      {
+        field: "operationId",
+        memberOf: {
+          fact: "contract-operation",
+          field: "operationId",
+          repositoryRoles: [
+            { field: "repositoryId", role: "api-contract" }
+          ],
+          repositoryRelation: {
+            type: "implemented-by",
+            currentField: "providerRepositoryId",
+            candidateField: "repositoryId",
+            direction: "incoming"
+          }
+        }
+      }
+    ]
+  };
+
+  const model: ArchitectureModel = {
+    repositories: {
+      "orders-contract": contract("orders-contract"),
+      "payments-contract": contract("payments-contract"),
+      "orders-backend": backend("orders-backend"),
+      "payments-backend": backend("payments-backend")
+    },
+    relations: [
+      {
+        type: "implemented-by",
+        from: "orders-contract",
+        to: "orders-backend"
+      },
+      {
+        type: "implemented-by",
+        from: "payments-contract",
+        to: "payments-backend"
+      }
+    ],
+    facts: [
+      {
+        kind: "intent-api-call",
+        consumerRepositoryId: "frontend",
+        providerRepositoryId: "payments-backend",
+        operationId: "getOrder",
+        via: "generated-runtime"
+      },
+      {
+        kind: "contract-operation",
+        repositoryId: "orders-contract",
+        operationId: "getOrder",
+        method: "GET",
+        path: "/api/orders/{id}",
+        operationKey: "GET /api/orders/{}"
+      },
+      {
+        kind: "contract-operation",
+        repositoryId: "payments-contract",
+        operationId: "getPayment",
+        method: "GET",
+        path: "/api/payments/{id}",
+        operationKey: "GET /api/payments/{}"
+      }
+    ],
+    evidence: [
+      {
+        repositoryId: "@intent",
+        producer: "intent",
+        factKind: "intent-api-call",
+        status: "complete"
+      },
+      evidence("orders-contract", "contract-operation"),
+      evidence("payments-contract", "contract-operation")
+    ]
+  };
+
+  const result = evaluateRules(model, [planRule], "plan");
+
+  assert.equal(result.status, "fail");
+  assert.equal(result.violations.length, 1);
+});
