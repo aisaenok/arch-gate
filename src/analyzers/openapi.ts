@@ -1,8 +1,22 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { Fact, ResolvedOpenApiRepository } from "../core/model.js";
+import { operationKey } from "../core/routes.js";
+import type {
+  AnalysisResult,
+  Fact,
+  ResolvedOpenApiRepository
+} from "../core/model.js";
 
-const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "trace"]);
+const HTTP_METHODS = new Set([
+  "get",
+  "post",
+  "put",
+  "patch",
+  "delete",
+  "head",
+  "options",
+  "trace"
+]);
 
 type OpenApiDocument = {
   paths?: Record<string, Record<string, { operationId?: string }>>;
@@ -20,12 +34,14 @@ async function parseDocument(file: string): Promise<OpenApiDocument> {
     return yaml.parse(source) as OpenApiDocument;
   }
 
-  throw new Error(`Unsupported OpenAPI file extension: ${ext || "<none>"}`);
+  throw new Error(
+    `Unsupported OpenAPI file extension: ${ext || "<none>"}`
+  );
 }
 
 export async function analyzeOpenApiRepository(
   repository: ResolvedOpenApiRepository
-): Promise<Fact[]> {
+): Promise<AnalysisResult> {
   const document = await parseDocument(repository.openapiFile);
   const facts: Fact[] = [];
 
@@ -34,12 +50,15 @@ export async function analyzeOpenApiRepository(
       const normalizedMethod = method.toLowerCase();
       if (!HTTP_METHODS.has(normalizedMethod)) continue;
 
+      const upperMethod = normalizedMethod.toUpperCase();
       facts.push({
         kind: "contract-operation",
         repositoryId: repository.id,
-        operationId: operation.operationId ?? `${normalizedMethod.toUpperCase()} ${apiPath}`,
-        method: normalizedMethod.toUpperCase(),
-        path: apiPath
+        operationId:
+          operation.operationId ?? `${upperMethod} ${apiPath}`,
+        method: upperMethod,
+        path: apiPath,
+        operationKey: operationKey(upperMethod, apiPath)
       });
     }
   }
@@ -52,5 +71,21 @@ export async function analyzeOpenApiRepository(
     });
   }
 
-  return facts;
+  return {
+    facts,
+    evidence: [
+      {
+        repositoryId: repository.id,
+        producer: "openapi",
+        factKind: "contract-operation",
+        status: "complete"
+      },
+      {
+        repositoryId: repository.id,
+        producer: "openapi",
+        factKind: "contract-schema",
+        status: "complete"
+      }
+    ]
+  };
 }
