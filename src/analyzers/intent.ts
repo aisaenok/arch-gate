@@ -1,11 +1,15 @@
 import { readFile } from "node:fs/promises";
-import type { ArchitectureIntent, Fact } from "../core/model.js";
+import type {
+  AnalysisResult,
+  ArchitectureIntent,
+  Fact
+} from "../core/model.js";
 
 export async function loadIntent(file: string): Promise<ArchitectureIntent> {
   return JSON.parse(await readFile(file, "utf8")) as ArchitectureIntent;
 }
 
-export function analyzeIntent(intent: ArchitectureIntent): Fact[] {
+export function analyzeIntent(intent: ArchitectureIntent): AnalysisResult {
   const facts: Fact[] = [];
 
   for (const apiCall of intent.apiCalls ?? []) {
@@ -27,5 +31,21 @@ export function analyzeIntent(intent: ArchitectureIntent): Fact[] {
     });
   }
 
-  return facts;
+  return {
+    facts,
+    evidence: [
+      {
+        repositoryId: "@intent",
+        producer: "intent",
+        factKind: "intent-api-call",
+        status: "complete"
+      },
+      {
+        repositoryId: "@intent",
+        producer: "intent",
+        factKind: "intent-wire-type",
+        status: "complete"
+      }
+    ]
+  };
 }

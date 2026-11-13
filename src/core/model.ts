@@ -2,6 +2,8 @@ export type OutputFormat = "text" | "json";
 export type RepositoryType = "typescript" | "openapi" | "java";
 export type RuleScope = "check" | "plan" | "both";
 export type FactValue = string | number | boolean | null;
+export type EvidenceStatus = "complete" | "partial" | "unavailable";
+export type GateStatus = "pass" | "fail" | "partial";
 
 interface RawRepositoryBase {
   type: RepositoryType;
@@ -125,9 +127,23 @@ export interface Fact {
   [key: string]: FactValue;
 }
 
+export interface FactEvidence {
+  repositoryId: string;
+  producer: string;
+  factKind: string;
+  status: EvidenceStatus;
+  message?: string;
+}
+
+export interface AnalysisResult {
+  facts: Fact[];
+  evidence: FactEvidence[];
+}
+
 export interface ArchitectureModel {
   repositories: Record<string, ResolvedRepository>;
   facts: Fact[];
+  evidence: FactEvidence[];
 }
 
 export interface Violation {
@@ -136,6 +152,19 @@ export interface Violation {
   source?: string;
   target?: string;
   details?: Record<string, string>;
+}
+
+export interface CoverageGap {
+  rule: string;
+  fact: string;
+  message: string;
+  repositoryId?: string;
+}
+
+export interface EvaluationResult {
+  status: GateStatus;
+  violations: Violation[];
+  gaps: CoverageGap[];
 }
 
 export interface ArchitectureIntent {

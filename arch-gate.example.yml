@@ -6,7 +6,8 @@ repositories:
     sourceDir: src
     generatedRuntimeDirs:
       - src/shared/api/generated
-    allowDirectHttpDirs: []
+    allowDirectHttpDirs:
+      - src/shared/api/http
     allowManualContractTypeDirs: []
     httpModules:
       - axios
@@ -24,43 +25,80 @@ repositories:
 
 rules:
   - id: API001
-    description: API consumer must use generated runtime for HTTP transport
+    description: API consumer code may reach HTTP only through generated runtime
     scope: check
     select:
-      fact: http-usage
-      repositoryRoles:
-        - field: repositoryId
-          role: api-consumer
-    assert:
-      - field: directHttpAllowed
-        equals: true
-        message: Direct HTTP transport is forbidden outside generated runtime
-    sourceField: source
-    targetField: target
-
-  - id: API002
-    description: Wire DTO must come from the API contract
-    scope: check
-    select:
-      fact: declared-type
+      fact: http-reach
       repositoryRoles:
         - field: repositoryId
           role: api-consumer
       where:
-        - field: manualContractTypeAllowed
+        - field: sourceDirectHttpAllowed
           equals: false
     assert:
-      - field: name
-        not: true
+      - field: throughGeneratedRuntime
+        equals: true
+        message: HTTP is reachable without passing through generated runtime
+    sourceField: sourceFile
+    targetField: terminalFile
+
+  - id: API002
+    description: Request types crossing generated API boundary need contract provenance
+    scope: check
+    select:
+      fact: api-boundary-type
+      repositoryRoles:
+        - field: repositoryId
+          role: api-consumer
+    assert:
+      - field: contractTypeProvenance
+        equals: true
+        message: A request passed to generated API is typed from a local non-contract declaration
+    sourceField: source
+    targetField: actualType
+
+  - id: API003
+    description: Generated runtime HTTP operations must exist in the API contract
+    scope: check
+    select:
+      fact: http-call
+      repositoryRoles:
+        - field: repositoryId
+          role: api-consumer
+      where:
+        - field: sourceGenerated
+          equals: true
+        - field: operationKeyKnown
+          equals: true
+    assert:
+      - field: operationKey
         memberOf:
-          fact: contract-schema
-          field: name
+          fact: contract-operation
+          field: operationKey
           repositoryRoles:
             - field: repositoryId
               role: api-contract
-        message: Consumer manually declares a type owned by the API contract
+        message: Generated runtime calls an HTTP operation absent from the API contract
     sourceField: source
-    targetField: name
+    targetField: operationKey
+
+  - id: API004
+    description: Generated runtime HTTP routes must be statically identifiable
+    scope: check
+    select:
+      fact: http-call
+      repositoryRoles:
+        - field: repositoryId
+          role: api-consumer
+      where:
+        - field: sourceGenerated
+          equals: true
+    assert:
+      - field: operationKeyKnown
+        equals: true
+        message: Generated runtime HTTP call has an unresolved method/path
+    sourceField: source
+    targetField: transport
 
   - id: PLAN001
     description: Planned operation must exist in the API contract
@@ -98,7 +136,7 @@ rules:
     targetField: operationId
 
   - id: PLAN003
-    description: Planned wire type must exist in its contract repository
+    description: Planned wire type must exist in its declared source repository
     scope: plan
     select:
       fact: intent-wire-type
