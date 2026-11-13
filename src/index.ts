@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 import path from "node:path";
-import { loadConfig } from "./config.js";
-import { loadContractCatalog } from "./openapi.js";
-import { analyzePl } from "./pl.js";
+import { loadConfig } from "./config/load.js";
+import { buildArchitectureModel, runCheck } from "./engine.js";
 import { checkPlan, loadIntent } from "./plan.js";
 import { report } from "./report.js";
-import type { OutputFormat } from "./model.js";
+import type { OutputFormat } from "./core/model.js";
 
 interface CliOptions {
   command: "check" | "plan";
@@ -46,11 +45,14 @@ function parseArgs(argv: string[]): CliOptions {
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   const config = await loadConfig(options.configFile);
-  const contracts = await loadContractCatalog(config.contractsFile);
 
   const violations = options.command === "check"
-    ? await analyzePl(config.pl, contracts)
-    : checkPlan(await loadIntent(path.resolve(options.intentFile!)), contracts);
+    ? await runCheck(config)
+    : checkPlan(
+        await loadIntent(path.resolve(options.intentFile!)),
+        await buildArchitectureModel(config, { analyzeTypeScript: false }),
+        config
+      );
 
   report(violations, options.format);
   process.exitCode = violations.length === 0 ? 0 : 1;

@@ -1,19 +1,36 @@
 {
   "repositories": {
-    "pl": {
+    "frontend": {
+      "type": "typescript",
       "root": "../pl",
+      "roles": ["api-consumer"],
       "sourceDir": "src",
       "generatedRuntimeDirs": ["src/shared/api/generated"],
       "allowDirectHttpDirs": [],
       "allowManualContractTypeDirs": [],
       "httpModules": ["axios"]
     },
-    "apiContracts": {
+    "contracts": {
+      "type": "openapi",
       "root": "../api-contracts",
+      "roles": ["api-contract"],
       "openapi": "openapi.yaml"
     },
-    "bh": {
-      "root": "../bh"
+    "backend": {
+      "type": "java",
+      "root": "../bh",
+      "roles": ["api-provider"]
+    }
+  },
+  "rules": {
+    "apiThroughGenerated": {
+      "consumerRole": "api-consumer",
+      "providerRole": "api-provider",
+      "contractRole": "api-contract"
+    },
+    "wireTypesFromContract": {
+      "consumerRole": "api-consumer",
+      "contractRole": "api-contract"
     }
   }
 }

@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { ContractCatalog, ContractOperation } from "./model.js";
+import type {
+  ContractCatalog,
+  ContractOperation,
+  ResolvedOpenApiRepository
+} from "../core/model.js";
 
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "trace"]);
 
@@ -25,8 +29,10 @@ async function parseDocument(file: string): Promise<OpenApiDocument> {
   throw new Error(`Unsupported OpenAPI file extension: ${ext || "<none>"}`);
 }
 
-export async function loadContractCatalog(file: string): Promise<ContractCatalog> {
-  const document = await parseDocument(file);
+export async function analyzeOpenApiRepository(
+  repository: ResolvedOpenApiRepository
+): Promise<ContractCatalog> {
+  const document = await parseDocument(repository.openapiFile);
   const operations: ContractOperation[] = [];
 
   for (const [apiPath, pathItem] of Object.entries(document.paths ?? {})) {
@@ -39,11 +45,10 @@ export async function loadContractCatalog(file: string): Promise<ContractCatalog
     }
   }
 
-  const schemaNames = new Set(Object.keys(document.components?.schemas ?? {}));
-
   return {
+    repositoryId: repository.id,
     operations,
     operationIds: new Set(operations.map((operation) => operation.operationId)),
-    schemaNames
+    schemaNames: new Set(Object.keys(document.components?.schemas ?? {}))
   };
 }

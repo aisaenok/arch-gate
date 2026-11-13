@@ -1,4 +1,4 @@
-import type { OutputFormat, Violation } from "./model.js";
+import type { OutputFormat, Violation } from "./core/model.js";
 
 export function report(violations: Violation[], format: OutputFormat): void {
   if (format === "json") {

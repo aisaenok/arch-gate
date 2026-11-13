@@ -1,15 +1,45 @@
 # arch-gate
 
-Small project-specific architecture gate for a multi-repository system:
+Small project-specific architecture gate for multi-repository systems.
+
+The engine does not know repository names such as `pl`, `bh` or `api-contracts`. Repository names are configuration data; source-language handling belongs to analyzers; architectural meaning is expressed through roles.
+
+For example, the same engine can model:
 
 ```text
-pl (TypeScript) <-> api-contracts (OpenAPI) <-> bh (Java)
+frontend  --role api-consumer
+contracts --role api-contract
+backend   --role api-provider
 ```
 
-The goal is not to replace ESLint, FSD rules or Java analyzers. The first PoC protects two cross-repository invariants that language-specific linters do not own:
+and the actual directories can still point to repositories named `pl`, `api-contracts` and `bh`.
 
-1. PL must not bypass the runtime API generated from `api-contracts` when calling BH.
-2. PL wire DTOs are owned by `api-contracts`; manually recreated transport DTOs are rejected.
+## Design
+
+```text
+                    config
+                      |
+          repositories + roles
+                      |
+        +-------------+-------------+
+        |                           |
+ TypeScript analyzer         OpenAPI analyzer
+        |                           |
+        +---------- facts ----------+
+                      |
+              architecture model
+                      |
+             project rules
+                      |
+                 violations
+```
+
+The current PoC protects two cross-repository invariants:
+
+1. Repositories with the configured API-consumer role must not bypass their generated runtime boundary when using HTTP transport.
+2. Wire DTOs used by configured API consumers are owned by repositories with the configured contract role rather than recreated manually.
+
+This tool does not replace ESLint, FSD rules or Java analyzers.
 
 ## Commands
 
@@ -20,7 +50,7 @@ npm install
 npm run build
 ```
 
-Check existing PL code:
+Check existing code:
 
 ```bash
 npm run arch-gate -- check --config ./arch-gate.config.json
@@ -38,7 +68,7 @@ Preflight an implementation plan before code is written:
 npm run arch-gate -- plan ./architecture-intent.json --config ./arch-gate.config.json
 ```
 
-The intended OpenSpec flow is:
+Intended OpenSpec flow:
 
 ```text
 proposal/design/tasks
@@ -58,36 +88,86 @@ openspec apply
 arch-gate check
 ```
 
-## Configuration
+## Configuration model
 
-Copy `arch-gate.config.example.json` and point it to the three sibling repositories.
+Repositories are keyed by arbitrary ids and have three independent properties:
 
-`generatedRuntimeDirs` defines where direct HTTP transport is allowed in PL. Any `fetch`, `XMLHttpRequest`, or configured HTTP-module import outside those directories is `ARCH001`.
+- `type` selects a source analyzer such as `typescript`, `openapi` or `java`;
+- `root` locates the repository;
+- `roles` describe architectural meaning such as `api-consumer`, `api-contract` and `api-provider`.
 
-`ARCH002` currently catches manually declared `interface`, `type`, or `class` names that duplicate OpenAPI schema names outside generated/allowed directories.
+Rules reference roles instead of repository names.
 
-## Plan mode
+Example:
 
-`plan` validates architecture intent without source code. The first intent model contains:
+```json
+{
+  "repositories": {
+    "frontend": {
+      "type": "typescript",
+      "root": "../pl",
+      "roles": ["api-consumer"],
+      "generatedRuntimeDirs": ["src/shared/api/generated"]
+    },
+    "contracts": {
+      "type": "openapi",
+      "root": "../api-contracts",
+      "roles": ["api-contract"],
+      "openapi": "openapi.yaml"
+    },
+    "backend": {
+      "type": "java",
+      "root": "../bh",
+      "roles": ["api-provider"]
+    }
+  },
+  "rules": {
+    "apiThroughGenerated": {
+      "consumerRole": "api-consumer",
+      "providerRole": "api-provider",
+      "contractRole": "api-contract"
+    }
+  }
+}
+```
 
-- `apiCalls`: planned PL -> BH operations and the transport path used;
-- `wireTypes`: planned wire DTOs and their source of truth.
+Adding a second TypeScript consumer or another Java provider therefore changes configuration, not the core engine.
 
-Current plan rules:
+## Internal boundaries
 
-- `PLAN001`: operation must exist in `api-contracts`;
-- `PLAN002`: PL -> BH call must use `generated-runtime`;
-- `PLAN003`: wire schema must exist in `api-contracts`;
-- `PLAN004`: PL wire DTO source must be `api-contracts`.
+`src/analyzers/*` extract language/source-specific facts only.
+
+`src/core/*` contains the shared repository/fact model and has no project repository names.
+
+`src/rules/*` evaluate architectural invariants over the shared model and select repositories by roles.
+
+`src/engine.ts` orchestrates analyzers and rules.
+
+`src/plan.ts` evaluates proposed architecture intent using repository ids and configured roles before implementation starts.
+
+## Current rules
+
+Runtime:
+
+- `ARCH001`: a configured API consumer uses direct HTTP transport outside generated/explicitly allowed directories;
+- `ARCH002`: a configured API consumer manually declares a type whose name is owned by a configured contract repository.
+
+Plan:
+
+- `PLAN000`: intent references an unknown repository id;
+- `PLAN001`: planned operation is absent from configured contract repositories;
+- `PLAN002`: planned consumer -> provider access bypasses generated runtime;
+- `PLAN003`: planned wire schema is absent from its contract repository;
+- `PLAN004`: planned wire DTO source does not have the configured contract role.
 
 ## Scope and deliberate limitations
 
-This is intentionally a narrow PoC, not a general architecture framework.
+This remains intentionally narrow rather than a generic framework.
 
-- It does not duplicate FSD/layer/public-API checks that belong in ESLint tooling.
-- Java/BH source analysis is not implemented yet; `bh` is reserved in config for the next cross-repository rule when there is a concrete need.
-- `ARCH002` is deliberately conservative and name-based; proving that an arbitrary PL domain type structurally duplicates a wire DTO requires richer data-flow/type analysis and should only be added if the project needs it.
-- YAML OpenAPI files are supported through the `yaml` package; JSON works without YAML parsing.
-- No baseline, graph visualization, plugin system or generic rule DSL is included.
+- No FSD/layer/public-API checks that belong in ESLint tooling.
+- Java repositories can have architectural roles, but Java source analysis is not implemented until a concrete rule needs Java facts.
+- `ARCH002` is deliberately conservative and name-based.
+- YAML OpenAPI files are supported through the `yaml` package.
+- No baseline, graph visualization, plugin API or generic rule DSL.
 
-The project should grow only when a real architecture invariant appears that existing language-specific quality gates cannot reliably enforce.
+The project should grow only when a real cross-repository invariant appears that existing language-specific quality gates cannot reliably enforce.
