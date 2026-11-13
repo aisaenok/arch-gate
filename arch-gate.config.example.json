@@ -1,0 +1,19 @@
+{
+  "repositories": {
+    "pl": {
+      "root": "../pl",
+      "sourceDir": "src",
+      "generatedRuntimeDirs": ["src/shared/api/generated"],
+      "allowDirectHttpDirs": [],
+      "allowManualContractTypeDirs": [],
+      "httpModules": ["axios"]
+    },
+    "apiContracts": {
+      "root": "../api-contracts",
+      "openapi": "openapi.yaml"
+    },
+    "bh": {
+      "root": "../bh"
+    }
+  }
+}

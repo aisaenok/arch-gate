@@ -1,0 +1,17 @@
+{
+  "apiCalls": [
+    {
+      "consumer": "pl",
+      "provider": "bh",
+      "operationId": "getApplication",
+      "via": "generated-runtime"
+    }
+  ],
+  "wireTypes": [
+    {
+      "consumer": "pl",
+      "name": "ApplicationResponse",
+      "source": "api-contracts"
+    }
+  ]
+}
