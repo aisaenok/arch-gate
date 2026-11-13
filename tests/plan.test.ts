@@ -34,7 +34,9 @@ const config: ResolvedGateConfig = {
       id: "backend",
       type: "java",
       root: path.join(root, "fixtures/backend"),
-      roles: ["api-provider"]
+      roles: ["api-provider"],
+      sourceDirs: [path.join(root, "fixtures/backend")],
+      frameworks: []
     }
   },
   rules: [
