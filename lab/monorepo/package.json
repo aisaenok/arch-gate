@@ -1,0 +1,8 @@
+{
+  "name": "arch-gate-monorepo-lab",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}

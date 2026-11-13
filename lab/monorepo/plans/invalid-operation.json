@@ -1,0 +1,10 @@
+{
+  "apiCalls": [
+    {
+      "consumer": "frontend",
+      "provider": "backend",
+      "operationId": "getMissingApplication",
+      "via": "generated-runtime"
+    }
+  ]
+}

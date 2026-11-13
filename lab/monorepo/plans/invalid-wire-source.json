@@ -1,0 +1,9 @@
+{
+  "wireTypes": [
+    {
+      "consumer": "frontend",
+      "name": "ApplicationResponse",
+      "source": "frontend"
+    }
+  ]
+}

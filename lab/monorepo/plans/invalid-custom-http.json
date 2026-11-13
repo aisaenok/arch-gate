@@ -1,0 +1,10 @@
+{
+  "apiCalls": [
+    {
+      "consumer": "frontend",
+      "provider": "backend",
+      "operationId": "getApplication",
+      "via": "custom-http"
+    }
+  ]
+}

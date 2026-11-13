@@ -1,0 +1,5 @@
+{
+  "name": "@lab/frontend",
+  "private": true,
+  "type": "module"
+}

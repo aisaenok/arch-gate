@@ -1,0 +1,38 @@
+openapi: 3.0.3
+info:
+  title: Architecture Gate Lab API
+  version: 1.0.0
+
+paths:
+  /api/applications/{id}:
+    get:
+      operationId: getApplication
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Application
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplicationResponse"
+
+components:
+  schemas:
+    ApplicationResponse:
+      type: object
+      required:
+        - id
+        - status
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum:
+            - DRAFT
+            - APPROVED
