@@ -160,21 +160,76 @@ function validateMemberOf(
 
   if (selector.repositoryRelation) {
     const relation = selector.repositoryRelation;
+    const hasType =
+      typeof relation.type === "string" &&
+      relation.type.trim() !== "";
+    const hasPath = relation.path !== undefined;
 
-    if (!relationTypes.has(relation.type)) {
+    if (hasType === hasPath) {
       throw new Error(
-        `${context} references unknown repository relation type "${relation.type}"`
+        `${context} repositoryRelation must define exactly one of type or path`
       );
     }
 
-    if (
-      relation.direction !== undefined &&
-      relation.direction !== "outgoing" &&
-      relation.direction !== "incoming"
-    ) {
-      throw new Error(
-        `${context} repositoryRelation.direction must be outgoing or incoming`
-      );
+    if (hasType) {
+      if (!relationTypes.has(relation.type!)) {
+        throw new Error(
+          `${context} references unknown repository relation type "${relation.type}"`
+        );
+      }
+
+      if (
+        relation.direction !== undefined &&
+        relation.direction !== "outgoing" &&
+        relation.direction !== "incoming"
+      ) {
+        throw new Error(
+          `${context} repositoryRelation.direction must be outgoing or incoming`
+        );
+      }
+    } else {
+      if (relation.direction !== undefined) {
+        throw new Error(
+          `${context} repositoryRelation.direction is only valid with direct type; path steps define their own direction`
+        );
+      }
+
+      if (
+        !Array.isArray(relation.path) ||
+        relation.path.length === 0
+      ) {
+        throw new Error(
+          `${context} repositoryRelation.path must be a non-empty array`
+        );
+      }
+
+      for (const [index, step] of relation.path.entries()) {
+        if (
+          !step ||
+          typeof step.type !== "string" ||
+          step.type.trim() === ""
+        ) {
+          throw new Error(
+            `${context} repositoryRelation.path[${index}] must define a non-empty type`
+          );
+        }
+
+        if (!relationTypes.has(step.type)) {
+          throw new Error(
+            `${context} references unknown repository relation type "${step.type}" in path[${index}]`
+          );
+        }
+
+        if (
+          step.direction !== undefined &&
+          step.direction !== "outgoing" &&
+          step.direction !== "incoming"
+        ) {
+          throw new Error(
+            `${context} repositoryRelation.path[${index}].direction must be outgoing or incoming`
+          );
+        }
+      }
     }
 
     if (
