@@ -1,0 +1,61 @@
+name: arch-gate-lab
+
+on:
+  push:
+    branches:
+      - feat/monorepo-lab
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "lab/monorepo/**"
+      - "package.json"
+      - "tsconfig.json"
+      - ".github/workflows/arch-gate-lab.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: npm install
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Check valid monorepo
+        run: npm run arch-gate -- check --config ./lab/monorepo/arch-gate.yml
+
+      - name: Check valid architecture intent
+        run: npm run arch-gate -- plan ./lab/monorepo/plans/valid.json --config ./lab/monorepo/arch-gate.yml
+
+      - name: Reject custom HTTP plan
+        shell: bash
+        run: |
+          if npm run arch-gate -- plan ./lab/monorepo/plans/invalid-custom-http.json --config ./lab/monorepo/arch-gate.yml; then
+            echo "Expected invalid-custom-http plan to fail"
+            exit 1
+          fi
+
+      - name: Reject wrong wire DTO owner
+        shell: bash
+        run: |
+          if npm run arch-gate -- plan ./lab/monorepo/plans/invalid-wire-source.json --config ./lab/monorepo/arch-gate.yml; then
+            echo "Expected invalid-wire-source plan to fail"
+            exit 1
+          fi
+
+      - name: Reject missing operation
+        shell: bash
+        run: |
+          if npm run arch-gate -- plan ./lab/monorepo/plans/invalid-operation.json --config ./lab/monorepo/arch-gate.yml; then
+            echo "Expected invalid-operation plan to fail"
+            exit 1
+          fi
