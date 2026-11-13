@@ -1,0 +1,17 @@
+{
+  "apiCalls": [
+    {
+      "consumer": "frontend",
+      "provider": "backend",
+      "operationId": "getApplication",
+      "via": "generated-runtime"
+    }
+  ],
+  "wireTypes": [
+    {
+      "consumer": "frontend",
+      "name": "ApplicationResponse",
+      "source": "contracts"
+    }
+  ]
+}
