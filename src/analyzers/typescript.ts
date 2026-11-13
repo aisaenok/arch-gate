@@ -1,12 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
-import type {
-  DeclaredType,
-  HttpUsage,
-  ResolvedTypeScriptRepository,
-  TypeScriptFacts
-} from "../core/model.js";
+import type { Fact, ResolvedTypeScriptRepository } from "../core/model.js";
 
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts"]);
 
@@ -43,7 +38,9 @@ function relativeToRoot(file: string, root: string): string {
   return path.relative(root, file).split(path.sep).join("/");
 }
 
-function declarationKind(node: ts.InterfaceDeclaration | ts.TypeAliasDeclaration | ts.ClassDeclaration): DeclaredType["kind"] {
+function declarationKind(
+  node: ts.InterfaceDeclaration | ts.TypeAliasDeclaration | ts.ClassDeclaration
+): string {
   if (ts.isInterfaceDeclaration(node)) return "interface";
   if (ts.isTypeAliasDeclaration(node)) return "type";
   return "class";
@@ -51,10 +48,9 @@ function declarationKind(node: ts.InterfaceDeclaration | ts.TypeAliasDeclaration
 
 export async function analyzeTypeScriptRepository(
   repository: ResolvedTypeScriptRepository
-): Promise<TypeScriptFacts> {
+): Promise<Fact[]> {
   const files = await walk(repository.sourceDir);
-  const httpUsages: HttpUsage[] = [];
-  const declaredTypes: DeclaredType[] = [];
+  const facts: Fact[] = [];
 
   for (const file of files) {
     const generated = isInsideAny(file, repository.generatedRuntimeDirs);
@@ -78,32 +74,35 @@ export async function analyzeTypeScriptRepository(
       if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
         const moduleName = node.moduleSpecifier.text;
         if (repository.httpModules.includes(moduleName)) {
-          httpUsages.push({
+          facts.push({
+            kind: "http-usage",
             repositoryId: repository.id,
             source: sourceLocation,
             target: moduleName,
-            kind: "module-import",
+            transportKind: "module-import",
             directHttpAllowed
           });
         }
       }
 
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "fetch") {
-        httpUsages.push({
+        facts.push({
+          kind: "http-usage",
           repositoryId: repository.id,
           source: sourceLocation,
           target: "fetch",
-          kind: "fetch",
+          transportKind: "fetch",
           directHttpAllowed
         });
       }
 
       if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "XMLHttpRequest") {
-        httpUsages.push({
+        facts.push({
+          kind: "http-usage",
           repositoryId: repository.id,
           source: sourceLocation,
           target: "XMLHttpRequest",
-          kind: "xml-http-request",
+          transportKind: "xml-http-request",
           directHttpAllowed
         });
       }
@@ -111,11 +110,12 @@ export async function analyzeTypeScriptRepository(
       if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node) || ts.isClassDeclaration(node)) {
         const name = node.name?.text;
         if (name) {
-          declaredTypes.push({
+          facts.push({
+            kind: "declared-type",
             repositoryId: repository.id,
             source: sourceLocation,
             name,
-            kind: declarationKind(node),
+            declarationKind: declarationKind(node),
             manualContractTypeAllowed
           });
         }
@@ -127,9 +127,5 @@ export async function analyzeTypeScriptRepository(
     visit(sourceFile);
   }
 
-  return {
-    repositoryId: repository.id,
-    httpUsages,
-    declaredTypes
-  };
+  return facts;
 }

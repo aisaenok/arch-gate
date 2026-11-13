@@ -1,18 +1,7 @@
 export type OutputFormat = "text" | "json";
 export type RepositoryType = "typescript" | "openapi" | "java";
-
-export interface ContractOperation {
-  method: string;
-  path: string;
-  operationId: string;
-}
-
-export interface ContractCatalog {
-  repositoryId: string;
-  operations: ContractOperation[];
-  operationIds: Set<string>;
-  schemaNames: Set<string>;
-}
+export type RuleScope = "check" | "plan" | "both";
+export type FactValue = string | number | boolean | null;
 
 interface RawRepositoryBase {
   type: RepositoryType;
@@ -43,23 +32,56 @@ export type RawRepositoryConfig =
   | RawOpenApiRepository
   | RawJavaRepository;
 
-export interface ApiThroughGeneratedRuleConfig {
-  consumerRole: string;
-  providerRole: string;
-  contractRole: string;
+export interface RepositoryRoleSelector {
+  field: string;
+  role: string;
 }
 
-export interface WireTypesFromContractRuleConfig {
-  consumerRole: string;
-  contractRole: string;
+export interface EqualitySelector {
+  field: string;
+  equals: FactValue;
+}
+
+export interface RuleSelector {
+  fact: string;
+  repositoryRoles?: RepositoryRoleSelector[];
+  where?: EqualitySelector[];
+}
+
+export interface MemberOfSelector {
+  fact: string;
+  field: string;
+  repositoryRoles?: RepositoryRoleSelector[];
+  where?: EqualitySelector[];
+  repositoryMatch?: {
+    sourceField: string;
+    currentField: string;
+  };
+}
+
+export interface RuleCondition {
+  field: string;
+  equals?: FactValue;
+  hasRole?: string;
+  repositoryExists?: boolean;
+  memberOf?: MemberOfSelector;
+  not?: boolean;
+  message?: string;
+}
+
+export interface RuleDefinition {
+  id: string;
+  description: string;
+  scope?: RuleScope;
+  select: RuleSelector;
+  assert: RuleCondition[];
+  sourceField?: string;
+  targetField?: string;
 }
 
 export interface RawGateConfig {
   repositories: Record<string, RawRepositoryConfig>;
-  rules?: {
-    apiThroughGenerated?: ApiThroughGeneratedRuleConfig;
-    wireTypesFromContract?: WireTypesFromContractRuleConfig;
-  };
+  rules: RuleDefinition[];
 }
 
 interface ResolvedRepositoryBase {
@@ -95,38 +117,17 @@ export type ResolvedRepository =
 export interface ResolvedGateConfig {
   configFile: string;
   repositories: Record<string, ResolvedRepository>;
-  rules: {
-    apiThroughGenerated?: ApiThroughGeneratedRuleConfig;
-    wireTypesFromContract?: WireTypesFromContractRuleConfig;
-  };
+  rules: RuleDefinition[];
 }
 
-export interface HttpUsage {
-  repositoryId: string;
-  source: string;
-  target: string;
-  kind: "module-import" | "fetch" | "xml-http-request";
-  directHttpAllowed: boolean;
-}
-
-export interface DeclaredType {
-  repositoryId: string;
-  source: string;
-  name: string;
-  kind: "interface" | "type" | "class";
-  manualContractTypeAllowed: boolean;
-}
-
-export interface TypeScriptFacts {
-  repositoryId: string;
-  httpUsages: HttpUsage[];
-  declaredTypes: DeclaredType[];
+export interface Fact {
+  kind: string;
+  [key: string]: FactValue;
 }
 
 export interface ArchitectureModel {
   repositories: Record<string, ResolvedRepository>;
-  contracts: ContractCatalog[];
-  typescript: TypeScriptFacts[];
+  facts: Fact[];
 }
 
 export interface Violation {

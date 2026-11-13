@@ -1,9 +1,12 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { parse } from "yaml";
 import type {
   RawGateConfig,
   ResolvedGateConfig,
-  ResolvedRepository
+  ResolvedRepository,
+  RuleCondition,
+  RuleDefinition
 } from "../core/model.js";
 
 function requireRoles(repositoryId: string, roles: unknown): string[] {
@@ -14,14 +17,45 @@ function requireRoles(repositoryId: string, roles: unknown): string[] {
   return roles;
 }
 
+function validateCondition(ruleId: string, condition: RuleCondition): void {
+  const operators = [
+    Object.prototype.hasOwnProperty.call(condition, "equals"),
+    typeof condition.hasRole === "string",
+    typeof condition.repositoryExists === "boolean",
+    condition.memberOf !== undefined
+  ].filter(Boolean).length;
+
+  if (operators !== 1) {
+    throw new Error(`Rule "${ruleId}" condition for field "${condition.field}" must define exactly one operator`);
+  }
+}
+
+function validateRule(rule: RuleDefinition): void {
+  if (!rule.id || !rule.description || !rule.select?.fact) {
+    throw new Error("Every rule must define id, description and select.fact");
+  }
+
+  if (!Array.isArray(rule.assert) || rule.assert.length === 0) {
+    throw new Error(`Rule "${rule.id}" must define at least one assertion`);
+  }
+
+  for (const condition of rule.assert) validateCondition(rule.id, condition);
+}
+
 export async function loadConfig(configFile: string): Promise<ResolvedGateConfig> {
   const absoluteConfig = path.resolve(configFile);
   const configDir = path.dirname(absoluteConfig);
-  const raw = JSON.parse(await readFile(absoluteConfig, "utf8")) as RawGateConfig;
+  const raw = parse(await readFile(absoluteConfig, "utf8")) as RawGateConfig;
 
   if (!raw.repositories || Object.keys(raw.repositories).length === 0) {
     throw new Error("Config must define at least one repository");
   }
+
+  if (!Array.isArray(raw.rules)) {
+    throw new Error("Config must define rules as an array");
+  }
+
+  raw.rules.forEach(validateRule);
 
   const repositories: Record<string, ResolvedRepository> = {};
 
@@ -60,12 +94,7 @@ export async function loadConfig(configFile: string): Promise<ResolvedGateConfig
     }
 
     if (repository.type === "java") {
-      repositories[id] = {
-        id,
-        type: "java",
-        root,
-        roles
-      };
+      repositories[id] = { id, type: "java", root, roles };
       continue;
     }
 
@@ -76,6 +105,6 @@ export async function loadConfig(configFile: string): Promise<ResolvedGateConfig
   return {
     configFile: absoluteConfig,
     repositories,
-    rules: raw.rules ?? {}
+    rules: raw.rules
   };
 }

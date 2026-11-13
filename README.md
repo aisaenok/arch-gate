@@ -1,80 +1,137 @@
 # arch-gate
 
-Small project-specific architecture gate for multi-repository systems.
+Small architecture gate with a generic fact engine and project-specific declarative policy.
 
-The engine does not know repository names such as `pl`, `bh` or `api-contracts`. Repository names are configuration data; source-language handling belongs to analyzers; architectural meaning is expressed through roles.
-
-For example, the same engine can model:
-
-```text
-frontend  --role api-consumer
-contracts --role api-contract
-backend   --role api-provider
-```
-
-and the actual directories can still point to repositories named `pl`, `api-contracts` and `bh`.
+The engine does not contain project rules. A project defines repositories, roles and rules in YAML; analyzers only extract facts from source formats.
 
 ## Design
 
 ```text
-                    config
-                      |
-          repositories + roles
-                      |
-        +-------------+-------------+
-        |                           |
- TypeScript analyzer         OpenAPI analyzer
-        |                           |
-        +---------- facts ----------+
-                      |
-              architecture model
-                      |
-             project rules
-                      |
-                 violations
+TypeScript / OpenAPI / intent
+           |
+        analyzers
+           |
+          facts
+           |
+   generic rule engine
+   selectors + conditions
+           |
+      arch-gate.yml
+           |
+       violations
 ```
 
-The current PoC protects two cross-repository invariants:
+There is deliberately no `src/rules/` directory.
 
-1. Repositories with the configured API-consumer role must not bypass their generated runtime boundary when using HTTP transport.
-2. Wire DTOs used by configured API consumers are owned by repositories with the configured contract role rather than recreated manually.
+Adding a normal architecture rule should mean changing `arch-gate.yml`, not adding a TypeScript module.
 
-This tool does not replace ESLint, FSD rules or Java analyzers.
+## Configuration
+
+See `arch-gate.example.yml`.
+
+Repositories are arbitrary ids with:
+
+- `type`: selects an analyzer;
+- `root`: locates the repository;
+- `roles`: gives the repository architectural meaning;
+- analyzer-specific settings such as `generatedRuntimeDirs` or `openapi`.
+
+Rules are an array of declarations.
+
+A rule has:
+
+- `id` and `description`;
+- `scope`: `check`, `plan` or `both`;
+- `select.fact`: the fact kind to evaluate;
+- optional `select.repositoryRoles` and `select.where`;
+- one or more `assert` conditions;
+- optional `sourceField` / `targetField` for diagnostics.
+
+## DSL primitives
+
+Selectors:
+
+```yaml
+select:
+  fact: http-usage
+  repositoryRoles:
+    - field: repositoryId
+      role: api-consumer
+  where:
+    - field: manualContractTypeAllowed
+      equals: false
+```
+
+Assertions currently support four generic operators.
+
+Equality:
+
+```yaml
+- field: directHttpAllowed
+  equals: true
+```
+
+Repository role:
+
+```yaml
+- field: sourceRepositoryId
+  hasRole: api-contract
+```
+
+Repository existence:
+
+```yaml
+- field: consumerRepositoryId
+  repositoryExists: true
+```
+
+Membership in another fact set:
+
+```yaml
+- field: operationId
+  memberOf:
+    fact: contract-operation
+    field: operationId
+    repositoryRoles:
+      - field: repositoryId
+        role: api-contract
+```
+
+Any assertion can be inverted with `not: true`.
+
+`memberOf.repositoryMatch` can correlate the selected fact with another repository id, for example to require a schema to exist specifically in the repository named by `sourceRepositoryId`.
+
+## Current project policy example
+
+The example YAML expresses the original cross-repository invariants without TypeScript rule modules:
+
+- consumers may use direct HTTP only in generated/explicitly allowed runtime locations;
+- consumers must not recreate contract-owned wire schema names;
+- a planned operation must exist in the contract;
+- a planned API call must use generated runtime;
+- a planned wire type must exist in its declared source contract;
+- the declared wire source must have the contract role.
+
+These are examples, not engine behavior.
 
 ## Commands
-
-Install dependencies and build:
 
 ```bash
 npm install
 npm run build
+
+npm run arch-gate -- check --config ./arch-gate.yml
+npm run arch-gate -- plan ./architecture-intent.json --config ./arch-gate.yml
+npm run arch-gate -- check --config ./arch-gate.yml --format json
 ```
 
-Check existing code:
-
-```bash
-npm run arch-gate -- check --config ./arch-gate.config.json
-```
-
-Machine-readable output:
-
-```bash
-npm run arch-gate -- check --config ./arch-gate.config.json --format json
-```
-
-Preflight an implementation plan before code is written:
-
-```bash
-npm run arch-gate -- plan ./architecture-intent.json --config ./arch-gate.config.json
-```
-
-Intended OpenSpec flow:
+## OpenSpec preflight
 
 ```text
 proposal/design/tasks
         |
         v
-agent creates architecture-intent.json
+architecture-intent.json
         |
         v
 arch-gate plan
@@ -88,86 +145,26 @@ openspec apply
 arch-gate check
 ```
 
-## Configuration model
+The preflight and post-implementation check use the same generic rule engine; only the fact source and rule `scope` differ.
 
-Repositories are keyed by arbitrary ids and have three independent properties:
+## Boundaries
 
-- `type` selects a source analyzer such as `typescript`, `openapi` or `java`;
-- `root` locates the repository;
-- `roles` describe architectural meaning such as `api-consumer`, `api-contract` and `api-provider`.
+`src/analyzers/*` knows source formats and emits generic facts.
 
-Rules reference roles instead of repository names.
+`src/core/selectors.ts` selects facts.
 
-Example:
+`src/core/conditions.ts` implements the small reusable predicate vocabulary.
 
-```json
-{
-  "repositories": {
-    "frontend": {
-      "type": "typescript",
-      "root": "../pl",
-      "roles": ["api-consumer"],
-      "generatedRuntimeDirs": ["src/shared/api/generated"]
-    },
-    "contracts": {
-      "type": "openapi",
-      "root": "../api-contracts",
-      "roles": ["api-contract"],
-      "openapi": "openapi.yaml"
-    },
-    "backend": {
-      "type": "java",
-      "root": "../bh",
-      "roles": ["api-provider"]
-    }
-  },
-  "rules": {
-    "apiThroughGenerated": {
-      "consumerRole": "api-consumer",
-      "providerRole": "api-provider",
-      "contractRole": "api-contract"
-    }
-  }
-}
-```
+`src/core/engine.ts` evaluates declarative rules.
 
-Adding a second TypeScript consumer or another Java provider therefore changes configuration, not the core engine.
+`src/engine.ts` orchestrates analyzers and the rule engine.
 
-## Internal boundaries
+The engine should only gain a new predicate when a needed invariant cannot be expressed by composing the existing generic predicates. Project-specific invariants should not become TypeScript modules.
 
-`src/analyzers/*` extract language/source-specific facts only.
+## Deliberate limitations
 
-`src/core/*` contains the shared repository/fact model and has no project repository names.
-
-`src/rules/*` evaluate architectural invariants over the shared model and select repositories by roles.
-
-`src/engine.ts` orchestrates analyzers and rules.
-
-`src/plan.ts` evaluates proposed architecture intent using repository ids and configured roles before implementation starts.
-
-## Current rules
-
-Runtime:
-
-- `ARCH001`: a configured API consumer uses direct HTTP transport outside generated/explicitly allowed directories;
-- `ARCH002`: a configured API consumer manually declares a type whose name is owned by a configured contract repository.
-
-Plan:
-
-- `PLAN000`: intent references an unknown repository id;
-- `PLAN001`: planned operation is absent from configured contract repositories;
-- `PLAN002`: planned consumer -> provider access bypasses generated runtime;
-- `PLAN003`: planned wire schema is absent from its contract repository;
-- `PLAN004`: planned wire DTO source does not have the configured contract role.
-
-## Scope and deliberate limitations
-
-This remains intentionally narrow rather than a generic framework.
-
-- No FSD/layer/public-API checks that belong in ESLint tooling.
-- Java repositories can have architectural roles, but Java source analysis is not implemented until a concrete rule needs Java facts.
-- `ARCH002` is deliberately conservative and name-based.
-- YAML OpenAPI files are supported through the `yaml` package.
-- No baseline, graph visualization, plugin API or generic rule DSL.
-
-The project should grow only when a real cross-repository invariant appears that existing language-specific quality gates cannot reliably enforce.
+- This is not intended to become a full programming language in YAML.
+- There is no plugin API or project-specific `rules/*.ts`.
+- Java source analysis remains absent until a real rule requires Java facts.
+- TypeScript DTO detection is still conservative and name-based.
+- No FSD/layer rules, baseline, visualization or graph database.

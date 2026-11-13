@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import path from "node:path";
+import { loadIntent } from "./analyzers/intent.js";
 import { loadConfig } from "./config/load.js";
-import { buildArchitectureModel, runCheck } from "./engine.js";
-import { checkPlan, loadIntent } from "./plan.js";
+import { runCheck, runPlan } from "./engine.js";
 import { report } from "./report.js";
 import type { OutputFormat } from "./core/model.js";
 
@@ -48,11 +48,7 @@ async function main(): Promise<void> {
 
   const violations = options.command === "check"
     ? await runCheck(config)
-    : checkPlan(
-        await loadIntent(path.resolve(options.intentFile!)),
-        await buildArchitectureModel(config, { analyzeTypeScript: false }),
-        config
-      );
+    : await runPlan(config, await loadIntent(path.resolve(options.intentFile!)));
 
   report(violations, options.format);
   process.exitCode = violations.length === 0 ? 0 : 1;

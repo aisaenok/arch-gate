@@ -1,17 +1,18 @@
+import { analyzeIntent } from "./analyzers/intent.js";
 import { analyzeOpenApiRepository } from "./analyzers/openapi.js";
 import { analyzeTypeScriptRepository } from "./analyzers/typescript.js";
+import { evaluateRules } from "./core/engine.js";
 import type {
+  ArchitectureIntent,
   ArchitectureModel,
-  ContractCatalog,
+  Fact,
   ResolvedGateConfig,
-  TypeScriptFacts,
   Violation
 } from "./core/model.js";
-import { checkApiThroughGenerated } from "./rules/api-through-generated.js";
-import { checkWireTypesFromContract } from "./rules/wire-types-from-contract.js";
 
 export interface BuildModelOptions {
   analyzeTypeScript?: boolean;
+  extraFacts?: Fact[];
 }
 
 export async function buildArchitectureModel(
@@ -19,38 +20,38 @@ export async function buildArchitectureModel(
   options: BuildModelOptions = {}
 ): Promise<ArchitectureModel> {
   const analyzeTypeScript = options.analyzeTypeScript ?? true;
-  const contracts: ContractCatalog[] = [];
-  const typescript: TypeScriptFacts[] = [];
+  const facts: Fact[] = [...(options.extraFacts ?? [])];
 
   for (const repository of Object.values(config.repositories)) {
     if (repository.type === "openapi") {
-      contracts.push(await analyzeOpenApiRepository(repository));
+      facts.push(...await analyzeOpenApiRepository(repository));
       continue;
     }
 
     if (repository.type === "typescript" && analyzeTypeScript) {
-      typescript.push(await analyzeTypeScriptRepository(repository));
+      facts.push(...await analyzeTypeScriptRepository(repository));
     }
   }
 
   return {
     repositories: config.repositories,
-    contracts,
-    typescript
+    facts
   };
 }
 
 export async function runCheck(config: ResolvedGateConfig): Promise<Violation[]> {
   const model = await buildArchitectureModel(config);
-  const violations: Violation[] = [];
+  return evaluateRules(model, config.rules, "check");
+}
 
-  if (config.rules.apiThroughGenerated) {
-    violations.push(...checkApiThroughGenerated(model, config.rules.apiThroughGenerated));
-  }
+export async function runPlan(
+  config: ResolvedGateConfig,
+  intent: ArchitectureIntent
+): Promise<Violation[]> {
+  const model = await buildArchitectureModel(config, {
+    analyzeTypeScript: false,
+    extraFacts: analyzeIntent(intent)
+  });
 
-  if (config.rules.wireTypesFromContract) {
-    violations.push(...checkWireTypesFromContract(model, config.rules.wireTypesFromContract));
-  }
-
-  return violations;
+  return evaluateRules(model, config.rules, "plan");
 }

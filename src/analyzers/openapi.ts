@@ -1,10 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type {
-  ContractCatalog,
-  ContractOperation,
-  ResolvedOpenApiRepository
-} from "../core/model.js";
+import type { Fact, ResolvedOpenApiRepository } from "../core/model.js";
 
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "trace"]);
 
@@ -17,9 +13,7 @@ async function parseDocument(file: string): Promise<OpenApiDocument> {
   const source = await readFile(file, "utf8");
   const ext = path.extname(file).toLowerCase();
 
-  if (ext === ".json") {
-    return JSON.parse(source) as OpenApiDocument;
-  }
+  if (ext === ".json") return JSON.parse(source) as OpenApiDocument;
 
   if (ext === ".yaml" || ext === ".yml") {
     const yaml = await import("yaml");
@@ -31,24 +25,32 @@ async function parseDocument(file: string): Promise<OpenApiDocument> {
 
 export async function analyzeOpenApiRepository(
   repository: ResolvedOpenApiRepository
-): Promise<ContractCatalog> {
+): Promise<Fact[]> {
   const document = await parseDocument(repository.openapiFile);
-  const operations: ContractOperation[] = [];
+  const facts: Fact[] = [];
 
   for (const [apiPath, pathItem] of Object.entries(document.paths ?? {})) {
     for (const [method, operation] of Object.entries(pathItem ?? {})) {
       const normalizedMethod = method.toLowerCase();
       if (!HTTP_METHODS.has(normalizedMethod)) continue;
 
-      const operationId = operation.operationId ?? `${normalizedMethod.toUpperCase()} ${apiPath}`;
-      operations.push({ method: normalizedMethod.toUpperCase(), path: apiPath, operationId });
+      facts.push({
+        kind: "contract-operation",
+        repositoryId: repository.id,
+        operationId: operation.operationId ?? `${normalizedMethod.toUpperCase()} ${apiPath}`,
+        method: normalizedMethod.toUpperCase(),
+        path: apiPath
+      });
     }
   }
 
-  return {
-    repositoryId: repository.id,
-    operations,
-    operationIds: new Set(operations.map((operation) => operation.operationId)),
-    schemaNames: new Set(Object.keys(document.components?.schemas ?? {}))
-  };
+  for (const schemaName of Object.keys(document.components?.schemas ?? {})) {
+    facts.push({
+      kind: "contract-schema",
+      repositoryId: repository.id,
+      name: schemaName
+    });
+  }
+
+  return facts;
 }
