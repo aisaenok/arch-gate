@@ -22,6 +22,7 @@ test("unknown fact kinds are rejected instead of passing vacuously", () => {
 
 test("unavailable analyzer evidence produces PARTIAL", () => {
   const model: ArchitectureModel = {
+    relations: [],
     repositories: {
       backend: {
         id: "backend",
@@ -74,6 +75,7 @@ test("unavailable analyzer evidence produces PARTIAL", () => {
 
 test("complete evidence with zero facts is a real PASS", () => {
   const model: ArchitectureModel = {
+    relations: [],
     repositories: {
       frontend: {
         id: "frontend",

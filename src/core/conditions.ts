@@ -4,6 +4,7 @@ import type {
   MemberOfSelector,
   RuleCondition
 } from "./model.js";
+import { repositoryRelationMatches } from "./relations.js";
 import { selectFacts } from "./selectors.js";
 
 function memberOf(
@@ -24,6 +25,18 @@ function memberOf(
       const sourceRepository = candidate[selector.repositoryMatch.sourceField];
       const currentRepository = current[selector.repositoryMatch.currentField];
       if (sourceRepository !== currentRepository) return false;
+    }
+
+    if (
+      selector.repositoryRelation &&
+      !repositoryRelationMatches(
+        model,
+        current,
+        candidate,
+        selector.repositoryRelation
+      )
+    ) {
+      return false;
     }
 
     return candidate[selector.field] === value;

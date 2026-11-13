@@ -11,6 +11,7 @@ const contractRoot = path.join(root, "fixtures/api-contracts");
 
 const config: ResolvedGateConfig = {
   configFile: "test",
+  relations: [],
   repositories: {
     frontend: {
       id: "frontend",

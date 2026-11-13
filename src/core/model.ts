@@ -5,6 +5,7 @@ export type RuleScope = "check" | "plan" | "both";
 export type FactValue = string | number | boolean | null;
 export type EvidenceStatus = "complete" | "partial" | "unavailable";
 export type GateStatus = "pass" | "fail" | "partial";
+export type RepositoryRelationDirection = "outgoing" | "incoming";
 
 interface RawRepositoryBase {
   type: RepositoryType;
@@ -37,6 +38,12 @@ export type RawRepositoryConfig =
   | RawOpenApiRepository
   | RawJavaRepository;
 
+export interface RepositoryRelation {
+  type: string;
+  from: string;
+  to: string;
+}
+
 export interface RepositoryRoleSelector {
   field: string;
   role: string;
@@ -53,6 +60,13 @@ export interface RuleSelector {
   where?: EqualitySelector[];
 }
 
+export interface RepositoryRelationMatch {
+  type: string;
+  currentField: string;
+  candidateField: string;
+  direction?: RepositoryRelationDirection;
+}
+
 export interface MemberOfSelector {
   fact: string;
   field: string;
@@ -62,6 +76,7 @@ export interface MemberOfSelector {
     sourceField: string;
     currentField: string;
   };
+  repositoryRelation?: RepositoryRelationMatch;
 }
 
 export interface RuleCondition {
@@ -86,6 +101,7 @@ export interface RuleDefinition {
 
 export interface RawGateConfig {
   repositories: Record<string, RawRepositoryConfig>;
+  relations?: RepositoryRelation[];
   rules: RuleDefinition[];
 }
 
@@ -124,6 +140,7 @@ export type ResolvedRepository =
 export interface ResolvedGateConfig {
   configFile: string;
   repositories: Record<string, ResolvedRepository>;
+  relations: RepositoryRelation[];
   rules: RuleDefinition[];
 }
 
@@ -147,6 +164,7 @@ export interface AnalysisResult {
 
 export interface ArchitectureModel {
   repositories: Record<string, ResolvedRepository>;
+  relations: RepositoryRelation[];
   facts: Fact[];
   evidence: FactEvidence[];
 }

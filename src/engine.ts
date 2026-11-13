@@ -50,6 +50,7 @@ export async function buildArchitectureModel(
 
   return {
     repositories: config.repositories,
+    relations: config.relations,
     facts,
     evidence
   };

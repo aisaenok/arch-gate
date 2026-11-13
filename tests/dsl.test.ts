@@ -7,6 +7,7 @@ import type {
 } from "../src/core/model.js";
 
 const model: ArchitectureModel = {
+  relations: [],
   repositories: {
     consumer: {
       id: "consumer",
