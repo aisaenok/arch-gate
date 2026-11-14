@@ -67,6 +67,10 @@ interface ExecutableScope {
   generated: boolean;
 }
 
+interface DynamicDispatchRecord {
+  candidateScopes: Set<string>;
+}
+
 function isInside(file: string, directory: string): boolean {
   const relative = path.relative(directory, file);
   return (
@@ -670,6 +674,189 @@ function standardCallbackArgumentIndexes(
   return undefined;
 }
 
+function methodScopeFromType(
+  type: ts.Type,
+  methodName: string,
+  location: ts.Node,
+  checker: ts.TypeChecker,
+  scopeIdByNode: Map<ts.Node, string>,
+  repository: ResolvedTypeScriptRepository
+): string | undefined {
+  const property = type.getProperty(methodName);
+  if (!property) return undefined;
+
+  const propertyType =
+    checker.getTypeOfSymbolAtLocation(
+      property,
+      location
+    );
+
+  for (const signature of propertyType.getCallSignatures()) {
+    const declaration = signature.declaration;
+    if (!declaration) continue;
+
+    const targetAbsolute =
+      declaration.getSourceFile().fileName;
+
+    if (!isInside(targetAbsolute, repository.root)) {
+      continue;
+    }
+
+    const scope = executableScopeForDeclaration(
+      declaration,
+      scopeIdByNode
+    );
+    if (scope) return scope;
+  }
+
+  return undefined;
+}
+
+function concreteReceiverMethodScope(
+  call: ts.CallExpression,
+  checker: ts.TypeChecker,
+  scopeIdByNode: Map<ts.Node, string>,
+  repository: ResolvedTypeScriptRepository
+): string | undefined {
+  if (!ts.isPropertyAccessExpression(call.expression)) {
+    return undefined;
+  }
+
+  const receiver = call.expression.expression;
+  if (!ts.isIdentifier(receiver)) {
+    return undefined;
+  }
+
+  const symbol = checker.getSymbolAtLocation(receiver);
+  const declarations = symbol?.declarations ?? [];
+
+  for (const declaration of declarations) {
+    if (
+      !ts.isVariableDeclaration(declaration) ||
+      !declaration.initializer ||
+      !ts.isNewExpression(declaration.initializer)
+    ) {
+      continue;
+    }
+
+    const concreteType =
+      checker.getTypeAtLocation(
+        declaration.initializer
+      );
+
+    const scope = methodScopeFromType(
+      concreteType,
+      call.expression.name.text,
+      declaration.initializer,
+      checker,
+      scopeIdByNode,
+      repository
+    );
+
+    if (scope) return scope;
+  }
+
+  return undefined;
+}
+
+function declaredInterfaceType(
+  declaration: ts.Signature["declaration"],
+  checker: ts.TypeChecker
+): ts.Type | undefined {
+  if (
+    !declaration ||
+    !ts.isMethodSignature(declaration) ||
+    !ts.isInterfaceDeclaration(declaration.parent)
+  ) {
+    return undefined;
+  }
+
+  const symbol = checker.getSymbolAtLocation(
+    declaration.parent.name
+  );
+
+  return symbol
+    ? checker.getDeclaredTypeOfSymbol(symbol)
+    : undefined;
+}
+
+function interfaceImplementationScopes(
+  declaration: ts.Signature["declaration"],
+  methodName: string,
+  checker: ts.TypeChecker,
+  scopeIdByNode: Map<ts.Node, string>,
+  repository: ResolvedTypeScriptRepository,
+  classDeclarations: ts.ClassDeclaration[]
+): Set<string> {
+  const interfaceType =
+    declaredInterfaceType(
+      declaration,
+      checker
+    );
+  if (!interfaceType) return new Set();
+
+  const result = new Set<string>();
+
+  for (const classDeclaration of classDeclarations) {
+    if (!classDeclaration.name) continue;
+
+    const symbol = checker.getSymbolAtLocation(
+      classDeclaration.name
+    );
+    if (!symbol) continue;
+
+    const classType =
+      checker.getDeclaredTypeOfSymbol(symbol);
+
+    if (
+      !checker.isTypeAssignableTo(
+        classType,
+        interfaceType
+      )
+    ) {
+      continue;
+    }
+
+    const scope = methodScopeFromType(
+      classType,
+      methodName,
+      classDeclaration,
+      checker,
+      scopeIdByNode,
+      repository
+    );
+
+    if (scope) result.add(scope);
+  }
+
+  return result;
+}
+
+function scopeCanReachHttp(
+  startScope: string,
+  callEdges: Map<string, Set<string>>,
+  callsByScope: Map<string, HttpCallRecord[]>
+): boolean {
+  const queue = [startScope];
+  const visited = new Set<string>();
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+
+    if ((callsByScope.get(current) ?? []).length > 0) {
+      return true;
+    }
+
+    for (const target of callEdges.get(current) ?? []) {
+      queue.push(target);
+    }
+  }
+
+  return false;
+}
+
 function compactFilePath(
   scopeIds: string[],
   scopes: Map<string, ExecutableScope>
@@ -713,6 +900,8 @@ export async function analyzeTypeScriptRepository(
     string,
     Set<string>
   >();
+  const classDeclarations: ts.ClassDeclaration[] = [];
+  const dynamicDispatches: DynamicDispatchRecord[] = [];
   let unresolvedInternalImports = 0;
   let unresolvedCallbackFlows = 0;
 
@@ -747,6 +936,10 @@ export async function analyzeTypeScriptRepository(
       enclosingFunction: string | undefined
     ): void => {
       let nextEnclosing = enclosingFunction;
+
+      if (ts.isClassDeclaration(node)) {
+        classDeclarations.push(node);
+      }
 
       if (isExecutableFunction(node)) {
         const id = functionScopeId(
@@ -1062,6 +1255,10 @@ export async function analyzeTypeScriptRepository(
           }
         }
 
+        let resolvedTargetScope:
+          | string
+          | undefined;
+
         if (declaration) {
           const targetAbsolute =
             declaration.getSourceFile().fileName;
@@ -1071,17 +1268,55 @@ export async function analyzeTypeScriptRepository(
               repository.root
             )
           ) {
-            const targetScope =
+            resolvedTargetScope =
               executableScopeForDeclaration(
                 declaration,
                 scopeIdByNode
               );
-            if (targetScope) {
+
+            if (resolvedTargetScope) {
               addEdge(
                 callEdges,
                 scopeId,
-                targetScope
+                resolvedTargetScope
               );
+            }
+          }
+        }
+
+        if (
+          !resolvedTargetScope &&
+          ts.isPropertyAccessExpression(node.expression)
+        ) {
+          const concreteScope =
+            concreteReceiverMethodScope(
+              node,
+              checker,
+              scopeIdByNode,
+              repository
+            );
+
+          if (concreteScope) {
+            addEdge(
+              callEdges,
+              scopeId,
+              concreteScope
+            );
+          } else {
+            const candidates =
+              interfaceImplementationScopes(
+                declaration,
+                node.expression.name.text,
+                checker,
+                scopeIdByNode,
+                repository,
+                classDeclarations
+              );
+
+            if (candidates.size > 0) {
+              dynamicDispatches.push({
+                candidateScopes: candidates
+              });
             }
           }
         }
@@ -1179,6 +1414,23 @@ export async function analyzeTypeScriptRepository(
       call.scopeId,
       current
     );
+  }
+
+  let unresolvedDynamicHttpDispatches = 0;
+
+  for (const dispatch of dynamicDispatches) {
+    if (
+      [...dispatch.candidateScopes].some(
+        (scopeId) =>
+          scopeCanReachHttp(
+            scopeId,
+            callEdges,
+            callsByScope
+          )
+      )
+    ) {
+      unresolvedDynamicHttpDispatches += 1;
+    }
   }
 
   for (const sourceAbsolute of files) {
@@ -1310,6 +1562,12 @@ export async function analyzeTypeScriptRepository(
   if (unresolvedCallbackFlows > 0) {
     reachabilityIssues.push(
       `${unresolvedCallbackFlows} repository-local function value(s) were passed to calls with unknown callback execution semantics`
+    );
+  }
+
+  if (unresolvedDynamicHttpDispatches > 0) {
+    reachabilityIssues.push(
+      `${unresolvedDynamicHttpDispatches} interface dispatch site(s) have HTTP-capable local implementations but no statically known concrete binding`
     );
   }
 
