@@ -109,8 +109,12 @@ implementations that cannot reach HTTP does not degrade evidence.
 HTTP transport aliases preserve transport semantics. For example, `const request = fetch`,
 `const client = axios`, `const get = axios.get`, and simple transitive variable alias
 chains are resolved back to the configured transport before method/path extraction.
-This is symbol-based alias resolution; arch-gate does not infer arbitrary custom
-objects as HTTP clients merely because they expose methods named `get` or `post`.
+
+Axios factory instances are also recognized: `axios.create()` preserves axios transport
+provenance, including subsequent method aliases such as `const get = client.get`.
+This is explicit known-factory semantics for axios; arch-gate does not infer arbitrary
+`.create()` calls or custom objects as HTTP clients merely because they expose methods
+named `get` or `post`.
 
 The tool deliberately does not flag arbitrary local types just because their shape resembles an OpenAPI schema. A local DTO becomes relevant when it actually crosses a contract/generated boundary.
 
