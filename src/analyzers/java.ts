@@ -29,6 +29,7 @@ interface AnnotationInfo {
 interface EndpointDraft {
   className: string;
   methodName: string;
+  arity: number;
   offset: number;
   operationId: string;
   method: string;
@@ -276,6 +277,29 @@ function methodName(
     : "";
 }
 
+function methodArity(
+  methodNode: SyntaxNode
+): number {
+  const parameters = directChild(
+    methodNode,
+    "FormalParameters"
+  );
+  if (!parameters) return 0;
+
+  return directChildren(parameters).filter(
+    (child) =>
+      child.name === "FormalParameter" ||
+      child.name === "SpreadParameter"
+  ).length;
+}
+
+function methodSignature(
+  name: string,
+  arity: number
+): string {
+  return `${name}/${arity}`;
+}
+
 function endpointFromMethod(
   methodNode: SyntaxNode,
   className: string,
@@ -303,6 +327,7 @@ function endpointFromMethod(
   return {
     className,
     methodName: methodName(methodNode, source),
+    arity: methodArity(methodNode),
     offset: methodNode.from,
     operationId,
     method,
@@ -399,7 +424,15 @@ function collectMethodNodes(
   for (const child of directChildren(body)) {
     if (child.name !== "MethodDeclaration") continue;
     const name = methodName(child, source);
-    if (name) result.set(name, child);
+    if (name) {
+      result.set(
+        methodSignature(
+          name,
+          methodArity(child)
+        ),
+        child
+      );
+    }
   }
 
   return result;
@@ -591,7 +624,12 @@ export async function analyzeJavaRepository(
       if (!interfaceInfo) continue;
 
       for (const endpoint of interfaceInfo.endpoints) {
-        const implementationMethod = info.methods.get(endpoint.methodName);
+        const implementationMethod = info.methods.get(
+          methodSignature(
+            endpoint.methodName,
+            endpoint.arity
+          )
+        );
         if (!implementationMethod) continue;
 
         inheritedEndpoints.push({
