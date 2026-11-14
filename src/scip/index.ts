@@ -8,11 +8,19 @@ import {
   type SymbolInformation
 } from "@scip-code/scip";
 
+function isLocalSymbol(symbol: string): boolean {
+  return symbol.startsWith("local ");
+}
+
 export class ScipIndex {
   private readonly documentsByPath = new Map<string, Document>();
   private readonly symbolInformationById = new Map<
     string,
     SymbolInformation
+  >();
+  private readonly localSymbolInformationByDocument = new Map<
+    string,
+    Map<string, SymbolInformation>
   >();
   private readonly definingDocumentBySymbol = new Map<
     string,
@@ -51,6 +59,35 @@ export class ScipIndex {
       throw new Error("SCIP SymbolInformation is missing symbol");
     }
 
+    if (isLocalSymbol(information.symbol)) {
+      if (!definingDocument) {
+        throw new Error(
+          `local SCIP symbol "${information.symbol}" has no defining document`
+        );
+      }
+
+      const bySymbol =
+        this.localSymbolInformationByDocument.get(
+          definingDocument.relativePath
+        ) ?? new Map<string, SymbolInformation>();
+
+      if (bySymbol.has(information.symbol)) {
+        throw new Error(
+          `duplicate local SCIP SymbolInformation "${information.symbol}" in document "${definingDocument.relativePath}"`
+        );
+      }
+
+      bySymbol.set(information.symbol, information);
+      this.localSymbolInformationByDocument.set(
+        definingDocument.relativePath,
+        bySymbol
+      );
+
+      // Local SCIP symbols are only meaningful inside their document.
+      // Do not place them into global symbol or relationship maps.
+      return;
+    }
+
     if (this.symbolInformationById.has(information.symbol)) {
       throw new Error(
         `duplicate SCIP SymbolInformation "${information.symbol}"`
@@ -70,7 +107,10 @@ export class ScipIndex {
     }
 
     for (const relationship of information.relationships) {
-      if (!relationship.isImplementation) {
+      if (
+        !relationship.isImplementation ||
+        isLocalSymbol(relationship.symbol)
+      ) {
         continue;
       }
 
@@ -100,18 +140,40 @@ export class ScipIndex {
   }
 
   getSymbolInformation(
-    symbol: string
+    symbol: string,
+    relativePath?: string
   ): SymbolInformation | undefined {
+    if (isLocalSymbol(symbol)) {
+      return relativePath
+        ? this.localSymbolInformationByDocument
+            .get(relativePath)
+            ?.get(symbol)
+        : undefined;
+    }
+
     return this.symbolInformationById.get(symbol);
   }
 
   getDefiningDocument(
-    symbol: string
+    symbol: string,
+    relativePath?: string
   ): Document | undefined {
+    if (isLocalSymbol(symbol)) {
+      if (!relativePath) return undefined;
+
+      return this.localSymbolInformationByDocument
+        .get(relativePath)
+        ?.has(symbol)
+        ? this.documentsByPath.get(relativePath)
+        : undefined;
+    }
+
     return this.definingDocumentBySymbol.get(symbol);
   }
 
   getImplementations(symbol: string): readonly string[] {
+    if (isLocalSymbol(symbol)) return [];
+
     return [
       ...(this.implementationsByTarget.get(symbol) ?? [])
     ];
