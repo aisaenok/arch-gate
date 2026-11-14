@@ -641,7 +641,7 @@ function repositoryLocalCallableScope(
 
 function standardCallbackArgumentIndexes(
   call: ts.CallExpression,
-  declaration: ts.SignatureDeclaration | undefined
+  declaration: ts.Signature["declaration"]
 ): readonly number[] | undefined {
   if (!declaration) return undefined;
 
