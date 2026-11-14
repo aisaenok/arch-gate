@@ -367,29 +367,6 @@ function resolveTypeName(
   return candidates.length === 1 ? candidates[0].fqn : undefined;
 }
 
-function methodNodes(
-  typeNode: SyntaxNode
-): Map<string, SyntaxNode> {
-  const body =
-    directChild(typeNode, "ClassBody") ??
-    directChild(typeNode, "InterfaceBody");
-  const result = new Map<string, SyntaxNode>();
-  if (!body) return result;
-
-  for (const child of directChildren(body)) {
-    if (child.name !== "MethodDeclaration") continue;
-    const header = directChild(child, "methodHeader");
-    const declarator = header
-      ? firstDescendant(header, "methodDeclarator")
-      : undefined;
-    if (!declarator) continue;
-    const name = definitionName(declarator, typeNode.tree.toString());
-    if (name) result.set(name, child);
-  }
-
-  return result;
-}
-
 function collectMethodNodes(
   typeNode: SyntaxNode,
   source: string
