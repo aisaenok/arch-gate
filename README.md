@@ -61,7 +61,7 @@ Annotated interfaces are treated as endpoint metadata declarations, not implemen
 
 Interface method matching currently uses method name + arity rather than a full Java symbol/type solver. Same-name/same-arity overloads that differ only by parameter types remain a deliberate limitation.
 
-If Java syntax cannot be parsed, endpoint evidence becomes `PARTIAL` rather than producing a false green result.
+If Java syntax cannot be parsed, or a configured Java `sourceDir` is unavailable, endpoint evidence becomes `PARTIAL` rather than producing a false confident result. Available source roots are still analyzed, so partial evidence can coexist with valid endpoint facts.
 
 ## TypeScript semantics
 

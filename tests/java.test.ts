@@ -164,3 +164,20 @@ test("inherited JAX-RS metadata is not attached to a different overload", async 
   assert.equal(analysis.evidence[0]?.status, "complete");
   assert.equal(analysis.facts.length, 0);
 });
+
+
+test("missing configured Java sourceDir makes endpoint evidence partial", async () => {
+  const repository = javaRepository("bh-jaxrs");
+  repository.sourceDirs.push(
+    path.join(repository.root, "target/generated-sources/missing")
+  );
+
+  const analysis = await analyzeJavaRepository(repository);
+
+  assert.equal(analysis.facts.length, 1);
+  assert.equal(analysis.evidence[0]?.status, "partial");
+  assert.match(
+    analysis.evidence[0]?.message ?? "",
+    /configured Java sourceDir is unavailable/
+  );
+});
