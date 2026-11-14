@@ -106,3 +106,55 @@ test("transport alias chains are followed transitively", async () => {
   assert.equal(calls[0]?.transport, "fetch");
   assert.equal(calls[0]?.operationKeyKnown, true);
 });
+
+
+test("axios.create instance preserves transport provenance", async () => {
+  const analysis = await analyzeTypeScriptRepository(
+    repository("pl-axios-create-instance")
+  );
+  const calls = httpCalls(analysis.facts);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.transport, "axios");
+  assert.equal(calls[0]?.method, "GET");
+  assert.equal(
+    calls[0]?.operationKey,
+    "GET /api/applications/{}"
+  );
+  assert.equal(calls[0]?.operationKeyKnown, true);
+});
+
+test("method alias from axios.create instance remains an HTTP call", async () => {
+  const analysis = await analyzeTypeScriptRepository(
+    repository("pl-axios-create-method-alias")
+  );
+  const calls = httpCalls(analysis.facts);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.transport, "axios");
+  assert.equal(calls[0]?.method, "GET");
+  assert.equal(
+    calls[0]?.operationKey,
+    "GET /api/applications/{}"
+  );
+});
+
+test("aliased axios create factory preserves instance provenance", async () => {
+  const analysis = await analyzeTypeScriptRepository(
+    repository("pl-axios-create-factory-alias")
+  );
+  const calls = httpCalls(analysis.facts);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.transport, "axios");
+  assert.equal(calls[0]?.method, "GET");
+});
+
+
+test("axios.create itself is not emitted as an HTTP call", async () => {
+  const analysis = await analyzeTypeScriptRepository(
+    repository("pl-axios-create-only")
+  );
+
+  assert.equal(httpCalls(analysis.facts).length, 0);
+});

@@ -225,6 +225,15 @@ function isRepositoryLocalIdentifier(
   );
 }
 
+function isTransportFactory(
+  binding: TransportBinding
+): boolean {
+  return (
+    binding.module === "axios" &&
+    binding.importedName === "create"
+  );
+}
+
 function resolveTransportExpression(
   expression: ts.Expression,
   checker: ts.TypeChecker,
@@ -243,6 +252,24 @@ function resolveTransportExpression(
       repository,
       seen
     );
+  }
+
+  if (ts.isCallExpression(expression)) {
+    const factory = resolveTransportExpression(
+      expression.expression,
+      checker,
+      repository,
+      seen
+    );
+
+    if (factory && isTransportFactory(factory)) {
+      return {
+        module: "axios",
+        importedName: "default"
+      };
+    }
+
+    return undefined;
   }
 
   if (ts.isIdentifier(expression)) {
@@ -1232,7 +1259,10 @@ export async function analyzeTypeScriptRepository(
             repository
           );
 
-        if (transportBinding) {
+        if (
+          transportBinding &&
+          !isTransportFactory(transportBinding)
+        ) {
           transport = transportBinding.module;
 
           if (transport === "fetch") {
