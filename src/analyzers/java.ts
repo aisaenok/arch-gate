@@ -254,6 +254,28 @@ function hasParseError(root: SyntaxNode): boolean {
   return false;
 }
 
+function methodName(
+  methodNode: SyntaxNode,
+  source: string
+): string {
+  const directDefinition = directChild(
+    methodNode,
+    "Definition"
+  );
+  if (directDefinition) {
+    return sourceText(directDefinition, source);
+  }
+
+  const header = directChild(methodNode, "methodHeader");
+  const declarator = header
+    ? firstDescendant(header, "methodDeclarator")
+    : undefined;
+
+  return declarator
+    ? definitionName(declarator, source)
+    : "";
+}
+
 function endpointFromMethod(
   methodNode: SyntaxNode,
   className: string,
@@ -278,14 +300,9 @@ function endpointFromMethod(
       .find((annotation) => annotation.name === "Operation")
       ?.attributes.get("operationId") ?? "";
 
-  const header = directChild(methodNode, "methodHeader");
-  const declarator = header
-    ? firstDescendant(header, "methodDeclarator")
-    : undefined;
-
   return {
     className,
-    methodName: declarator ? definitionName(declarator, source) : "",
+    methodName: methodName(methodNode, source),
     offset: methodNode.from,
     operationId,
     method,
@@ -319,28 +336,30 @@ function typeFqn(packageValue: string, name: string): string {
   return packageValue ? `${packageValue}.${name}` : name;
 }
 
-function typeHeader(node: SyntaxNode, source: string): string {
-  const body =
-    directChild(node, "ClassBody") ??
-    directChild(node, "InterfaceBody");
-  return source.slice(node.from, body?.from ?? node.to);
-}
-
 function implementedTypeNames(
   node: SyntaxNode,
   source: string
 ): string[] {
-  const header = typeHeader(node, source);
-  const match = header.match(/\bimplements\s+(.+)$/s);
-  if (!match) return [];
+  const superInterfaces = directChild(
+    node,
+    "SuperInterfaces"
+  );
+  if (!superInterfaces) return [];
 
-  return match[1]
-    .split(",")
-    .map((item) =>
-      item
-        .replace(/<[^<>]*>/g, "")
-        .trim()
-    )
+  const interfaceList =
+    directChild(
+      superInterfaces,
+      "InterfaceTypeList"
+    ) ??
+    firstDescendant(
+      superInterfaces,
+      "InterfaceTypeList"
+    );
+  if (!interfaceList) return [];
+
+  return directChildren(interfaceList)
+    .filter((child) => child.name === "TypeName")
+    .map((child) => sourceText(child, source))
     .filter(Boolean);
 }
 
@@ -379,12 +398,7 @@ function collectMethodNodes(
 
   for (const child of directChildren(body)) {
     if (child.name !== "MethodDeclaration") continue;
-    const header = directChild(child, "methodHeader");
-    const declarator = header
-      ? firstDescendant(header, "methodDeclarator")
-      : undefined;
-    if (!declarator) continue;
-    const name = definitionName(declarator, source);
+    const name = methodName(child, source);
     if (name) result.set(name, child);
   }
 
