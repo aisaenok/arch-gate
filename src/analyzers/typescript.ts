@@ -225,6 +225,15 @@ function isRepositoryLocalIdentifier(
   );
 }
 
+function isTransportFactory(
+  binding: TransportBinding
+): boolean {
+  return (
+    binding.module === "axios" &&
+    binding.importedName === "create"
+  );
+}
+
 function resolveTransportExpression(
   expression: ts.Expression,
   checker: ts.TypeChecker,
@@ -253,10 +262,7 @@ function resolveTransportExpression(
       seen
     );
 
-    if (
-      factory?.module === "axios" &&
-      factory.importedName === "create"
-    ) {
+    if (factory && isTransportFactory(factory)) {
       return {
         module: "axios",
         importedName: "default"
@@ -1253,7 +1259,10 @@ export async function analyzeTypeScriptRepository(
             repository
           );
 
-        if (transportBinding) {
+        if (
+          transportBinding &&
+          !isTransportFactory(transportBinding)
+        ) {
           transport = transportBinding.module;
 
           if (transport === "fetch") {
