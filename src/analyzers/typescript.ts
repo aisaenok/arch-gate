@@ -29,6 +29,14 @@ interface HttpCallRecord {
   fact: Fact;
   sourceFile: string;
   sourceAbsolute: string;
+  scopeId: string;
+}
+
+interface ExecutableScope {
+  id: string;
+  sourceFile: string;
+  sourceAbsolute: string;
+  generated: boolean;
 }
 
 function isInside(file: string, directory: string): boolean {
@@ -130,19 +138,26 @@ function transportBindings(
     if (!clause) continue;
 
     if (clause.name) {
-      bindings.set(clause.name.text, { module: moduleName, importedName: "default" });
+      bindings.set(clause.name.text, {
+        module: moduleName,
+        importedName: "default"
+      });
     }
 
     const named = clause.namedBindings;
     if (named && ts.isNamespaceImport(named)) {
-      bindings.set(named.name.text, { module: moduleName, importedName: "*" });
+      bindings.set(named.name.text, {
+        module: moduleName,
+        importedName: "*"
+      });
     }
 
     if (named && ts.isNamedImports(named)) {
       for (const item of named.elements) {
         bindings.set(item.name.text, {
           module: moduleName,
-          importedName: item.propertyName?.text ?? item.name.text
+          importedName:
+            item.propertyName?.text ?? item.name.text
         });
       }
     }
@@ -170,12 +185,17 @@ function isRepositoryLocalIdentifier(
   const symbol = checker.getSymbolAtLocation(identifier);
   return (
     symbol?.declarations?.some((declaration) =>
-      isInside(declaration.getSourceFile().fileName, repository.root)
+      isInside(
+        declaration.getSourceFile().fileName,
+        repository.root
+      )
     ) ?? false
   );
 }
 
-function staticPath(expression: ts.Expression | undefined): string | undefined {
+function staticPath(
+  expression: ts.Expression | undefined
+): string | undefined {
   if (!expression) return undefined;
 
   if (
@@ -196,11 +216,17 @@ function staticPath(expression: ts.Expression | undefined): string | undefined {
 
   if (
     ts.isBinaryExpression(expression) &&
-    expression.operatorToken.kind === ts.SyntaxKind.PlusToken
+    expression.operatorToken.kind ===
+      ts.SyntaxKind.PlusToken
   ) {
     const left = staticPath(expression.left);
     const right = staticPath(expression.right);
-    if (left !== undefined && right !== undefined) return left + right;
+    if (
+      left !== undefined &&
+      right !== undefined
+    ) {
+      return left + right;
+    }
     if (left !== undefined) return left + "{}";
     if (right !== undefined) return "{}" + right;
   }
@@ -215,15 +241,20 @@ function objectProperty(
   for (const property of object.properties) {
     if (!ts.isPropertyAssignment(property)) continue;
     const propertyName =
-      ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)
+      ts.isIdentifier(property.name) ||
+      ts.isStringLiteral(property.name)
         ? property.name.text
         : undefined;
-    if (propertyName === name) return property.initializer;
+    if (propertyName === name) {
+      return property.initializer;
+    }
   }
   return undefined;
 }
 
-function stringValue(expression: ts.Expression | undefined): string | undefined {
+function stringValue(
+  expression: ts.Expression | undefined
+): string | undefined {
   if (
     expression &&
     (ts.isStringLiteral(expression) ||
@@ -236,8 +267,14 @@ function stringValue(expression: ts.Expression | undefined): string | undefined 
 
 function fetchMethod(call: ts.CallExpression): string {
   const options = call.arguments[1];
-  if (options && ts.isObjectLiteralExpression(options)) {
-    return (stringValue(objectProperty(options, "method")) ?? "GET").toUpperCase();
+  if (
+    options &&
+    ts.isObjectLiteralExpression(options)
+  ) {
+    return (
+      stringValue(objectProperty(options, "method")) ??
+      "GET"
+    ).toUpperCase();
   }
   return "GET";
 }
@@ -258,8 +295,14 @@ function resolveModule(
 
   if (!specifier.startsWith(".")) return undefined;
 
-  const base = path.resolve(path.dirname(sourceFile), specifier);
-  const withoutJs = base.replace(/\.(mjs|cjs|js)$/, "");
+  const base = path.resolve(
+    path.dirname(sourceFile),
+    specifier
+  );
+  const withoutJs = base.replace(
+    /\.(mjs|cjs|js)$/,
+    ""
+  );
   const candidates = [
     base,
     `${withoutJs}.ts`,
@@ -270,18 +313,29 @@ function resolveModule(
     path.join(withoutJs, "index.tsx")
   ];
 
-  return candidates.find((candidate) => ts.sys.fileExists(candidate));
+  return candidates.find((candidate) =>
+    ts.sys.fileExists(candidate)
+  );
 }
 
 function declarationKind(
-  node: ts.InterfaceDeclaration | ts.TypeAliasDeclaration | ts.ClassDeclaration
+  node:
+    | ts.InterfaceDeclaration
+    | ts.TypeAliasDeclaration
+    | ts.ClassDeclaration
 ): string {
-  if (ts.isInterfaceDeclaration(node)) return "interface";
-  if (ts.isTypeAliasDeclaration(node)) return "type";
+  if (ts.isInterfaceDeclaration(node)) {
+    return "interface";
+  }
+  if (ts.isTypeAliasDeclaration(node)) {
+    return "type";
+  }
   return "class";
 }
 
-function aliasDefinesShape(node: ts.TypeAliasDeclaration): boolean {
+function aliasDefinesShape(
+  node: ts.TypeAliasDeclaration
+): boolean {
   return !(
     ts.isTypeReferenceNode(node.type) ||
     ts.isTypeQueryNode(node.type) ||
@@ -294,15 +348,22 @@ function symbolDeclarationFiles(
 ): string[] {
   const symbol = type.aliasSymbol ?? type.getSymbol();
   return (
-    symbol?.declarations?.map((declaration) => declaration.getSourceFile().fileName) ??
-    []
+    symbol?.declarations?.map(
+      (declaration) =>
+        declaration.getSourceFile().fileName
+    ) ?? []
   );
 }
 
-function typeName(type: ts.Type, checker: ts.TypeChecker): string {
-  return type.aliasSymbol?.getName() ??
+function typeName(
+  type: ts.Type,
+  checker: ts.TypeChecker
+): string {
+  return (
+    type.aliasSymbol?.getName() ??
     type.getSymbol()?.getName() ??
-    checker.typeToString(type);
+    checker.typeToString(type)
+  );
 }
 
 function typeNodeReferencesGenerated(
@@ -312,9 +373,12 @@ function typeNodeReferencesGenerated(
   seen = new Set<ts.Symbol>()
 ): boolean {
   if (ts.isTypeReferenceNode(node)) {
-    const symbol = checker.getSymbolAtLocation(node.typeName);
+    const symbol = checker.getSymbolAtLocation(
+      node.typeName
+    );
     const target =
-      symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0
+      symbol &&
+      (symbol.flags & ts.SymbolFlags.Alias) !== 0
         ? checker.getAliasedSymbol(symbol)
         : symbol;
 
@@ -323,13 +387,17 @@ function typeNodeReferencesGenerated(
 
       if (
         target.declarations?.some((declaration) =>
-          isInsideAny(declaration.getSourceFile().fileName, generatedDirs)
+          isInsideAny(
+            declaration.getSourceFile().fileName,
+            generatedDirs
+          )
         )
       ) {
         return true;
       }
 
-      for (const declaration of target.declarations ?? []) {
+      for (const declaration of
+        target.declarations ?? []) {
         if (
           ts.isTypeAliasDeclaration(declaration) &&
           typeNodeReferencesGenerated(
@@ -381,7 +449,8 @@ function argumentHasContractProvenance(
     return true;
   }
 
-  const actualType = checker.getTypeAtLocation(argument);
+  const actualType =
+    checker.getTypeAtLocation(argument);
   if (
     symbolDeclarationFiles(actualType).some((file) =>
       isInsideAny(file, generatedDirs)
@@ -395,7 +464,8 @@ function argumentHasContractProvenance(
     const declarations = symbol?.declarations ?? [];
 
     for (const declaration of declarations) {
-      const typeNode = declarationTypeNode(declaration);
+      const typeNode =
+        declarationTypeNode(declaration);
       if (
         typeNode &&
         typeNodeReferencesGenerated(
@@ -408,11 +478,10 @@ function argumentHasContractProvenance(
       }
     }
 
-    // An inferred object value has no manually declared DTO type. The generated
-    // function signature still type-checks it at the boundary.
     if (
       declarations.some((declaration) => {
-        const typeNode = declarationTypeNode(declaration);
+        const typeNode =
+          declarationTypeNode(declaration);
         return typeNode === undefined;
       })
     ) {
@@ -428,16 +497,111 @@ function sourceAllowedDirectHttp(
   repository: ResolvedTypeScriptRepository
 ): boolean {
   return (
-    isInsideAny(file, repository.generatedRuntimeDirs) ||
-    isInsideAny(file, repository.allowDirectHttpDirs)
+    isInsideAny(
+      file,
+      repository.generatedRuntimeDirs
+    ) ||
+    isInsideAny(
+      file,
+      repository.allowDirectHttpDirs
+    )
   );
+}
+
+function isExecutableFunction(
+  node: ts.Node
+): node is ts.FunctionLikeDeclaration {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node)
+  );
+}
+
+function moduleScopeId(sourceFile: string): string {
+  return `module:${sourceFile}`;
+}
+
+function functionScopeId(
+  sourceFile: string,
+  node: ts.Node
+): string {
+  return `function:${sourceFile}:${node.pos}`;
+}
+
+function addEdge(
+  edges: Map<string, Set<string>>,
+  source: string,
+  target: string
+): void {
+  const targets = edges.get(source) ?? new Set<string>();
+  targets.add(target);
+  edges.set(source, targets);
+}
+
+function executableScopeForDeclaration(
+  declaration: ts.Declaration,
+  scopeIdByNode: Map<ts.Node, string>
+): string | undefined {
+  const direct = scopeIdByNode.get(declaration);
+  if (direct) return direct;
+
+  if (
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer &&
+    isExecutableFunction(declaration.initializer)
+  ) {
+    return scopeIdByNode.get(declaration.initializer);
+  }
+
+  if (
+    ts.isPropertyDeclaration(declaration) &&
+    declaration.initializer &&
+    isExecutableFunction(declaration.initializer)
+  ) {
+    return scopeIdByNode.get(declaration.initializer);
+  }
+
+  let current: ts.Node | undefined =
+    declaration.parent;
+  while (current) {
+    const scope = scopeIdByNode.get(current);
+    if (scope) return scope;
+    if (ts.isSourceFile(current)) break;
+    current = current.parent;
+  }
+
+  return undefined;
+}
+
+function compactFilePath(
+  scopeIds: string[],
+  scopes: Map<string, ExecutableScope>
+): string[] {
+  const files: string[] = [];
+
+  for (const scopeId of scopeIds) {
+    const file = scopes.get(scopeId)?.sourceFile;
+    if (!file) continue;
+    if (files[files.length - 1] !== file) {
+      files.push(file);
+    }
+  }
+
+  return files;
 }
 
 export async function analyzeTypeScriptRepository(
   repository: ResolvedTypeScriptRepository
 ): Promise<AnalysisResult> {
   const files = await walk(repository.sourceDir);
-  const fileSet = new Set(files.map((file) => path.resolve(file)));
+  const fileSet = new Set(
+    files.map((file) => path.resolve(file))
+  );
   const options = compilerOptions(repository);
   const program = ts.createProgram({
     rootNames: files,
@@ -447,54 +611,153 @@ export async function analyzeTypeScriptRepository(
 
   const facts: Fact[] = [];
   const httpCalls: HttpCallRecord[] = [];
-  const adjacency = new Map<string, Set<string>>();
+  const scopeIdByNode = new Map<ts.Node, string>();
+  const scopes = new Map<string, ExecutableScope>();
+  const rootScopesByFile = new Map<
+    string,
+    Set<string>
+  >();
+  const callEdges = new Map<
+    string,
+    Set<string>
+  >();
   let unresolvedInternalImports = 0;
 
   for (const absoluteFile of files) {
-    const sourceFile = program.getSourceFile(absoluteFile);
+    const sourceFile =
+      program.getSourceFile(absoluteFile);
     if (!sourceFile) continue;
 
-    const sourceRelative = relativeToRoot(absoluteFile, repository.root);
+    const sourceRelative = relativeToRoot(
+      absoluteFile,
+      repository.root
+    );
     const generated = isInsideAny(
       absoluteFile,
       repository.generatedRuntimeDirs
     );
-    const directHttpAllowed = sourceAllowedDirectHttp(
-      absoluteFile,
-      repository
+    const moduleId = moduleScopeId(sourceRelative);
+
+    scopes.set(moduleId, {
+      id: moduleId,
+      sourceFile: sourceRelative,
+      sourceAbsolute: absoluteFile,
+      generated
+    });
+    rootScopesByFile.set(
+      sourceRelative,
+      new Set([moduleId])
     );
+
+    const registerScopes = (
+      node: ts.Node,
+      enclosingFunction: string | undefined
+    ): void => {
+      let nextEnclosing = enclosingFunction;
+
+      if (isExecutableFunction(node)) {
+        const id = functionScopeId(
+          sourceRelative,
+          node
+        );
+        scopeIdByNode.set(node, id);
+        scopes.set(id, {
+          id,
+          sourceFile: sourceRelative,
+          sourceAbsolute: absoluteFile,
+          generated
+        });
+
+        if (!enclosingFunction) {
+          rootScopesByFile
+            .get(sourceRelative)
+            ?.add(id);
+        }
+
+        nextEnclosing = id;
+      }
+
+      ts.forEachChild(node, (child) =>
+        registerScopes(
+          child,
+          nextEnclosing
+        )
+      );
+    };
+
+    registerScopes(sourceFile, undefined);
+  }
+
+  for (const absoluteFile of files) {
+    const sourceFile =
+      program.getSourceFile(absoluteFile);
+    if (!sourceFile) continue;
+
+    const sourceRelative = relativeToRoot(
+      absoluteFile,
+      repository.root
+    );
+    const generated = isInsideAny(
+      absoluteFile,
+      repository.generatedRuntimeDirs
+    );
+    const directHttpAllowed =
+      sourceAllowedDirectHttp(
+        absoluteFile,
+        repository
+      );
     const bindings = transportBindings(
       sourceFile,
       repository.httpModules
     );
-
-    adjacency.set(sourceRelative, new Set());
+    const moduleId = moduleScopeId(sourceRelative);
 
     for (const statement of sourceFile.statements) {
       if (
         !ts.isImportDeclaration(statement) ||
-        !ts.isStringLiteral(statement.moduleSpecifier)
+        !ts.isStringLiteral(
+          statement.moduleSpecifier
+        )
       ) {
         continue;
       }
 
-      const specifier = statement.moduleSpecifier.text;
-      const targetAbsolute = resolveModule(specifier, absoluteFile, options);
+      const specifier =
+        statement.moduleSpecifier.text;
+      const targetAbsolute = resolveModule(
+        specifier,
+        absoluteFile,
+        options
+      );
       const internal =
-        !!targetAbsolute && isInside(targetAbsolute, repository.root);
+        !!targetAbsolute &&
+        isInside(
+          targetAbsolute,
+          repository.root
+        );
       const targetFile =
         targetAbsolute && internal
-          ? relativeToRoot(targetAbsolute, repository.root)
+          ? relativeToRoot(
+              targetAbsolute,
+              repository.root
+            )
           : undefined;
 
-      if (specifier.startsWith(".") && !targetAbsolute) {
+      if (
+        specifier.startsWith(".") &&
+        !targetAbsolute
+      ) {
         unresolvedInternalImports += 1;
       }
 
       facts.push({
         kind: "module-dependency",
         repositoryId: repository.id,
-        source: `${sourceRelative}:${location(sourceFile, statement)}`,
+        source:
+          `${sourceRelative}:${location(
+            sourceFile,
+            statement
+          )}`,
         sourceFile: sourceRelative,
         specifier,
         targetFile: targetFile ?? "",
@@ -505,16 +768,36 @@ export async function analyzeTypeScriptRepository(
       if (
         targetAbsolute &&
         internal &&
-        fileSet.has(path.resolve(targetAbsolute))
+        fileSet.has(
+          path.resolve(targetAbsolute)
+        ) &&
+        targetFile
       ) {
-        adjacency.get(sourceRelative)?.add(
-          relativeToRoot(targetAbsolute, repository.root)
+        addEdge(
+          callEdges,
+          moduleId,
+          moduleScopeId(targetFile)
         );
       }
     }
 
-    const visit = (node: ts.Node): void => {
-      const source = `${sourceRelative}:${location(sourceFile, node)}`;
+    const visit = (
+      node: ts.Node,
+      currentScopeId: string
+    ): void => {
+      let scopeId = currentScopeId;
+
+      if (isExecutableFunction(node)) {
+        scopeId =
+          scopeIdByNode.get(node) ??
+          currentScopeId;
+      }
+
+      const source =
+        `${sourceRelative}:${location(
+          sourceFile,
+          node
+        )}`;
 
       if (
         ts.isInterfaceDeclaration(node) ||
@@ -529,10 +812,12 @@ export async function analyzeTypeScriptRepository(
             source,
             sourceFile: sourceRelative,
             name,
-            declarationKind: declarationKind(node),
-            definesShape: ts.isTypeAliasDeclaration(node)
-              ? aliasDefinesShape(node)
-              : true,
+            declarationKind:
+              declarationKind(node),
+            definesShape:
+              ts.isTypeAliasDeclaration(node)
+                ? aliasDefinesShape(node)
+                : true,
             sourceGenerated: generated
           });
         }
@@ -554,43 +839,70 @@ export async function analyzeTypeScriptRepository(
         ) {
           transport = "fetch";
           method = fetchMethod(node);
-          requestPath = staticPath(node.arguments[0]);
+          requestPath = staticPath(
+            node.arguments[0]
+          );
         } else {
-          const root = rootIdentifier(node.expression);
-          const binding = root ? bindings.get(root.text) : undefined;
+          const root = rootIdentifier(
+            node.expression
+          );
+          const binding = root
+            ? bindings.get(root.text)
+            : undefined;
 
           if (binding) {
             transport = binding.module;
 
-            if (ts.isPropertyAccessExpression(node.expression)) {
-              const candidate = node.expression.name.text.toLowerCase();
+            if (
+              ts.isPropertyAccessExpression(
+                node.expression
+              )
+            ) {
+              const candidate =
+                node.expression.name.text.toLowerCase();
               if (HTTP_METHODS.has(candidate)) {
-                method = candidate.toUpperCase();
-                requestPath = staticPath(node.arguments[0]);
+                method =
+                  candidate.toUpperCase();
+                requestPath = staticPath(
+                  node.arguments[0]
+                );
               }
             } else if (
               ts.isIdentifier(node.expression) &&
               binding.importedName &&
-              HTTP_METHODS.has(binding.importedName.toLowerCase())
+              HTTP_METHODS.has(
+                binding.importedName.toLowerCase()
+              )
             ) {
-              method = binding.importedName.toUpperCase();
-              requestPath = staticPath(node.arguments[0]);
+              method =
+                binding.importedName.toUpperCase();
+              requestPath = staticPath(
+                node.arguments[0]
+              );
             } else if (
               ts.isIdentifier(node.expression) &&
               node.arguments[0] &&
-              ts.isObjectLiteralExpression(node.arguments[0])
+              ts.isObjectLiteralExpression(
+                node.arguments[0]
+              )
             ) {
               const config = node.arguments[0];
               method = (
-                stringValue(objectProperty(config, "method")) ?? "GET"
+                stringValue(
+                  objectProperty(config, "method")
+                ) ?? "GET"
               ).toUpperCase();
-              requestPath = staticPath(objectProperty(config, "url"));
+              requestPath = staticPath(
+                objectProperty(config, "url")
+              );
             }
           }
         }
 
         if (transport) {
-          const knownOperation = !!method && requestPath !== undefined;
+          const knownOperation =
+            !!method &&
+            requestPath !== undefined;
           const fact: Fact = {
             kind: "http-call",
             repositoryId: repository.id,
@@ -600,7 +912,10 @@ export async function analyzeTypeScriptRepository(
             method: method ?? "",
             path: requestPath ?? "",
             operationKey: knownOperation
-              ? operationKey(method!, requestPath!)
+              ? operationKey(
+                  method!,
+                  requestPath!
+                )
               : "",
             operationKeyKnown: knownOperation,
             sourceGenerated: generated,
@@ -610,39 +925,82 @@ export async function analyzeTypeScriptRepository(
           httpCalls.push({
             fact,
             sourceFile: sourceRelative,
-            sourceAbsolute: absoluteFile
+            sourceAbsolute: absoluteFile,
+            scopeId
           });
         }
 
-        const signature = checker.getResolvedSignature(node);
-        const declaration = signature?.declaration;
-        if (signature && declaration) {
-          const targetAbsolute = declaration.getSourceFile().fileName;
+        const signature =
+          checker.getResolvedSignature(node);
+        const declaration =
+          signature?.declaration;
+
+        if (declaration) {
+          const targetAbsolute =
+            declaration.getSourceFile().fileName;
           if (
-            isInsideAny(targetAbsolute, repository.generatedRuntimeDirs)
+            isInside(
+              targetAbsolute,
+              repository.root
+            )
           ) {
-            const parameters = signature.getParameters();
+            const targetScope =
+              executableScopeForDeclaration(
+                declaration,
+                scopeIdByNode
+              );
+            if (targetScope) {
+              addEdge(
+                callEdges,
+                scopeId,
+                targetScope
+              );
+            }
+          }
+        }
+
+        if (signature && declaration) {
+          const targetAbsolute =
+            declaration.getSourceFile().fileName;
+          if (
+            isInsideAny(
+              targetAbsolute,
+              repository.generatedRuntimeDirs
+            )
+          ) {
+            const parameters =
+              signature.getParameters();
             for (
               let index = 0;
               index < node.arguments.length &&
               index < parameters.length;
               index += 1
             ) {
-              const parameter = parameters[index]!;
-              const expectedType = checker.getTypeOfSymbolAtLocation(
-                parameter,
-                declaration
-              );
-              const expectedGenerated = symbolDeclarationFiles(
-                expectedType
-              ).some((file) =>
-                isInsideAny(file, repository.generatedRuntimeDirs)
-              );
+              const parameter =
+                parameters[index]!;
+              const expectedType =
+                checker.getTypeOfSymbolAtLocation(
+                  parameter,
+                  declaration
+                );
+              const expectedGenerated =
+                symbolDeclarationFiles(
+                  expectedType
+                ).some((file) =>
+                  isInsideAny(
+                    file,
+                    repository.generatedRuntimeDirs
+                  )
+                );
 
-              if (!expectedGenerated) continue;
+              if (!expectedGenerated) {
+                continue;
+              }
 
-              const argument = node.arguments[index]!;
-              const actualType = checker.getTypeAtLocation(argument);
+              const argument =
+                node.arguments[index]!;
+              const actualType =
+                checker.getTypeAtLocation(argument);
 
               facts.push({
                 kind: "api-boundary-type",
@@ -654,100 +1012,165 @@ export async function analyzeTypeScriptRepository(
                   repository.root
                 ),
                 argumentIndex: index,
-                expectedType: typeName(expectedType, checker),
-                actualType: typeName(actualType, checker),
-                contractTypeProvenance: argumentHasContractProvenance(
-                  argument,
-                  checker,
-                  repository.generatedRuntimeDirs
-                )
+                expectedType: typeName(
+                  expectedType,
+                  checker
+                ),
+                actualType: typeName(
+                  actualType,
+                  checker
+                ),
+                contractTypeProvenance:
+                  argumentHasContractProvenance(
+                    argument,
+                    checker,
+                    repository.generatedRuntimeDirs
+                  )
               });
             }
           }
         }
       }
 
-      ts.forEachChild(node, visit);
+      ts.forEachChild(node, (child) =>
+        visit(child, scopeId)
+      );
     };
 
-    visit(sourceFile);
+    visit(sourceFile, moduleId);
   }
 
-  const callsByFile = new Map<string, HttpCallRecord[]>();
+  const callsByScope = new Map<
+    string,
+    HttpCallRecord[]
+  >();
   for (const call of httpCalls) {
-    const current = callsByFile.get(call.sourceFile) ?? [];
+    const current =
+      callsByScope.get(call.scopeId) ?? [];
     current.push(call);
-    callsByFile.set(call.sourceFile, current);
+    callsByScope.set(
+      call.scopeId,
+      current
+    );
   }
 
   for (const sourceAbsolute of files) {
-    const sourceFile = relativeToRoot(sourceAbsolute, repository.root);
-    const sourceDirectHttpAllowed = sourceAllowedDirectHttp(
+    const sourceFile = relativeToRoot(
       sourceAbsolute,
-      repository
+      repository.root
     );
-    const sourceGenerated = isInsideAny(
-      sourceAbsolute,
-      repository.generatedRuntimeDirs
-    );
+    const sourceDirectHttpAllowed =
+      sourceAllowedDirectHttp(
+        sourceAbsolute,
+        repository
+      );
+    const emitted = new Set<string>();
 
-    const queue: Array<{
-      file: string;
-      path: string[];
-      generated: boolean;
-    }> = [
-      {
-        file: sourceFile,
-        path: [sourceFile],
-        generated: sourceGenerated
-      }
-    ];
-    const visited = new Set<string>();
+    for (const rootScopeId of
+      rootScopesByFile.get(sourceFile) ?? []) {
+      const rootScope = scopes.get(
+        rootScopeId
+      );
+      if (!rootScope) continue;
 
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      const stateKey = `${current.file}|${current.generated}`;
-      if (visited.has(stateKey)) continue;
-      visited.add(stateKey);
+      const queue: Array<{
+        scopeId: string;
+        path: string[];
+        generated: boolean;
+      }> = [
+        {
+          scopeId: rootScopeId,
+          path: [rootScopeId],
+          generated: rootScope.generated
+        }
+      ];
+      const visited = new Set<string>();
 
-      for (const call of callsByFile.get(current.file) ?? []) {
-        facts.push({
-          kind: "http-reach",
-          repositoryId: repository.id,
-          source: sourceFile,
-          sourceFile,
-          terminalFile: current.file,
-          transport: String(call.fact.transport),
-          operationKey: String(call.fact.operationKey),
-          operationKeyKnown: Boolean(call.fact.operationKeyKnown),
-          throughGeneratedRuntime: current.generated,
-          sourceDirectHttpAllowed,
-          path: current.path.join(" -> ")
-        });
-      }
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        const stateKey =
+          `${current.scopeId}|${current.generated}`;
+        if (visited.has(stateKey)) continue;
+        visited.add(stateKey);
 
-      for (const target of adjacency.get(current.file) ?? []) {
-        const targetAbsolute = path.resolve(repository.root, target);
-        queue.push({
-          file: target,
-          path: [...current.path, target],
-          generated:
-            current.generated ||
-            isInsideAny(
-              targetAbsolute,
-              repository.generatedRuntimeDirs
-            )
-        });
+        const currentScope =
+          scopes.get(current.scopeId);
+        if (!currentScope) continue;
+
+        const filePath = compactFilePath(
+          current.path,
+          scopes
+        );
+        const pathText = filePath.join(
+          " -> "
+        );
+
+        for (const call of
+          callsByScope.get(
+            current.scopeId
+          ) ?? []) {
+          const key = [
+            call.fact.source,
+            current.generated,
+            pathText
+          ].join("|");
+          if (emitted.has(key)) continue;
+          emitted.add(key);
+
+          facts.push({
+            kind: "http-reach",
+            repositoryId: repository.id,
+            source: sourceFile,
+            sourceFile,
+            terminalFile:
+              currentScope.sourceFile,
+            transport: String(
+              call.fact.transport
+            ),
+            operationKey: String(
+              call.fact.operationKey
+            ),
+            operationKeyKnown: Boolean(
+              call.fact.operationKeyKnown
+            ),
+            throughGeneratedRuntime:
+              current.generated,
+            sourceDirectHttpAllowed,
+            path: pathText
+          });
+        }
+
+        for (const targetScopeId of
+          callEdges.get(
+            current.scopeId
+          ) ?? []) {
+          const targetScope =
+            scopes.get(targetScopeId);
+          if (!targetScope) continue;
+
+          queue.push({
+            scopeId: targetScopeId,
+            path: [
+              ...current.path,
+              targetScopeId
+            ],
+            generated:
+              current.generated ||
+              targetScope.generated
+          });
+        }
       }
     }
   }
 
   const resolutionStatus =
-    unresolvedInternalImports === 0 ? "complete" : "partial";
+    unresolvedInternalImports === 0
+      ? "complete"
+      : "partial";
   const resolutionMessage =
     unresolvedInternalImports === 0
       ? undefined
-      : `${unresolvedInternalImports} relative import(s) could not be resolved; transitive facts may be incomplete.`;
+      : `${unresolvedInternalImports} relative import(s) could not be resolved; call reachability facts may be incomplete.`;
 
   const evidence: FactEvidence[] = [
     {
