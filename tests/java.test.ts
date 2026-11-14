@@ -119,3 +119,38 @@ test("backend endpoint absent from OpenAPI fails", async () => {
   assert.equal(result.status, "fail");
   assert.equal(result.violations[0]?.target, "GET /admin");
 });
+
+
+test("annotated JAX-RS interface alone is not a backend implementation", async () => {
+  const analysis = await analyzeJavaRepository(
+    javaRepository("bh-jaxrs-interface-only")
+  );
+
+  assert.equal(analysis.evidence[0]?.status, "complete");
+  assert.equal(analysis.facts.length, 0);
+});
+
+test("concrete class inherits JAX-RS endpoint metadata from implemented interface", async () => {
+  const analysis = await analyzeJavaRepository(
+    javaRepository("bh-jaxrs-inherited")
+  );
+
+  assert.equal(analysis.evidence[0]?.status, "complete");
+  assert.equal(analysis.facts.length, 1);
+  assert.equal(
+    analysis.facts[0]?.className,
+    "ApplicationController"
+  );
+  assert.equal(
+    analysis.facts[0]?.methodName,
+    "getApplication"
+  );
+  assert.equal(
+    analysis.facts[0]?.operationKey,
+    "GET /api/applications/{}"
+  );
+  assert.equal(
+    analysis.facts[0]?.sourceFile,
+    "src/main/java/dev/archgate/ApplicationController.java"
+  );
+});
