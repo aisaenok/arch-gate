@@ -12,13 +12,16 @@ import {
 } from "@scip-code/scip";
 import {
   analyzeJavaRepository,
-  type JavaImplementationResolution
+  type JavaImplementationResolution,
+  type JavaInterfaceEndpointCandidate
 } from "../src/analyzers/java.js";
 import type {
   ResolvedJavaRepository
 } from "../src/core/model.js";
 import {
-  compareJavaImplementationsWithScip
+  compareJavaImplementationParityWithScip,
+  compareJavaImplementationsWithScip,
+  compareScipJavaImplementationsWithManual
 } from "../src/scip/java-shadow.js";
 import {
   parseScipIndex
@@ -81,10 +84,10 @@ function syntheticIndex(
             occurrences: [
               {
                 range: [
-                  resolution.implementationLine - 1,
-                  4,
-                  resolution.implementationLine - 1,
-                  18
+                  resolution.implementationDefinitionLine - 1,
+                  18,
+                  resolution.implementationDefinitionLine - 1,
+                  32
                 ],
                 symbol: implementationSymbol,
                 symbolRoles: SymbolRole.Definition
@@ -98,6 +101,18 @@ function syntheticIndex(
                 symbol: interfaceSymbol,
                 displayName: resolution.interfaceMethodName
               }
+            ],
+            occurrences: [
+              {
+                range: [
+                  resolution.interfaceDefinitionLine - 1,
+                  11,
+                  resolution.interfaceDefinitionLine - 1,
+                  25
+                ],
+                symbol: interfaceSymbol,
+                symbolRoles: SymbolRole.Definition
+              }
             ]
           }
         ]
@@ -106,26 +121,44 @@ function syntheticIndex(
   );
 }
 
-async function manualResolution():
-  Promise<JavaImplementationResolution> {
+interface ManualContext {
+  resolution: JavaImplementationResolution;
+  endpoint: JavaInterfaceEndpointCandidate;
+}
+
+async function manualContext(): Promise<ManualContext> {
   const resolutions: JavaImplementationResolution[] = [];
+  const endpoints: JavaInterfaceEndpointCandidate[] = [];
 
   const analysis = await analyzeJavaRepository(
     javaRepository(),
     {
       onImplementationResolution: (resolution) => {
         resolutions.push(resolution);
+      },
+      onInterfaceEndpoint: (endpoint) => {
+        endpoints.push(endpoint);
       }
     }
   );
 
   assert.equal(analysis.facts.length, 1);
   assert.equal(resolutions.length, 1);
-  return resolutions[0]!;
+  assert.equal(endpoints.length, 1);
+
+  return {
+    resolution: resolutions[0]!,
+    endpoint: endpoints[0]!
+  };
 }
 
-test("manual inherited endpoint resolution is backed by SCIP implementation relationship", async () => {
-  const resolution = await manualResolution();
+test("SCIP comparison anchors on the method definition rather than annotation line", async () => {
+  const { resolution } = await manualContext();
+
+  assert.equal(resolution.implementationLine, 6);
+  assert.equal(resolution.implementationDefinitionLine, 7);
+  assert.equal(resolution.interfaceDefinitionLine, 10);
+
   const result = compareJavaImplementationsWithScip(
     [resolution],
     syntheticIndex(resolution, true)
@@ -136,8 +169,35 @@ test("manual inherited endpoint resolution is backed by SCIP implementation rela
   assert.deepEqual(result.mismatches, []);
 });
 
-test("shadow comparison reports disagreement without changing Java facts", async () => {
-  const resolution = await manualResolution();
+test("manual inherited endpoint resolution is backed by SCIP in both directions", async () => {
+  const { resolution, endpoint } =
+    await manualContext();
+
+  const result =
+    compareJavaImplementationParityWithScip(
+      [resolution],
+      [endpoint],
+      syntheticIndex(resolution, true)
+    );
+
+  assert.equal(result.manualToScip.matched, 1);
+  assert.deepEqual(
+    result.manualToScip.mismatches,
+    []
+  );
+  assert.equal(
+    result.scipToManual.implementationsChecked,
+    1
+  );
+  assert.equal(result.scipToManual.matched, 1);
+  assert.deepEqual(
+    result.scipToManual.mismatches,
+    []
+  );
+});
+
+test("forward shadow comparison reports a manual relation that SCIP does not confirm", async () => {
+  const { resolution } = await manualContext();
   const result = compareJavaImplementationsWithScip(
     [resolution],
     syntheticIndex(resolution, false)
@@ -149,5 +209,34 @@ test("shadow comparison reports disagreement without changing Java facts", async
   assert.equal(
     result.mismatches[0]?.reason,
     "implementation-relationship-missing"
+  );
+});
+
+test("reverse shadow comparison reports a SCIP implementation missed by the manual resolver", async () => {
+  const { resolution, endpoint } =
+    await manualContext();
+
+  const result =
+    compareScipJavaImplementationsWithManual(
+      [],
+      [endpoint],
+      syntheticIndex(resolution, true)
+    );
+
+  assert.equal(result.endpointsChecked, 1);
+  assert.equal(result.implementationsChecked, 1);
+  assert.equal(result.matched, 0);
+  assert.equal(result.mismatches.length, 1);
+  assert.equal(
+    result.mismatches[0]?.reason,
+    "manual-resolution-missing"
+  );
+  assert.equal(
+    result.mismatches[0]?.implementationSourceFile,
+    resolution.implementationSourceFile
+  );
+  assert.equal(
+    result.mismatches[0]?.implementationDefinitionLine,
+    resolution.implementationDefinitionLine
   );
 });

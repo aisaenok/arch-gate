@@ -3,7 +3,8 @@ import {
   type Occurrence
 } from "@scip-code/scip";
 import type {
-  JavaImplementationResolution
+  JavaImplementationResolution,
+  JavaInterfaceEndpointCandidate
 } from "../analyzers/java.js";
 import type { ScipIndex } from "./index.js";
 
@@ -22,6 +23,33 @@ export interface JavaScipShadowResult {
   checked: number;
   matched: number;
   mismatches: JavaScipShadowMismatch[];
+}
+
+export type JavaScipReverseMismatchReason =
+  | "interface-document-missing"
+  | "interface-definition-missing"
+  | "implementation-definition-missing"
+  | "manual-resolution-missing";
+
+export interface JavaScipReverseMismatch {
+  endpoint: JavaInterfaceEndpointCandidate;
+  reason: JavaScipReverseMismatchReason;
+  interfaceSymbols: string[];
+  implementationSymbol?: string;
+  implementationSourceFile?: string;
+  implementationDefinitionLine?: number;
+}
+
+export interface JavaScipReverseResult {
+  endpointsChecked: number;
+  implementationsChecked: number;
+  matched: number;
+  mismatches: JavaScipReverseMismatch[];
+}
+
+export interface JavaScipParityResult {
+  manualToScip: JavaScipShadowResult;
+  scipToManual: JavaScipReverseResult;
 }
 
 function occurrenceStartLine(
@@ -46,29 +74,58 @@ function isDefinition(
   );
 }
 
-function implementationSymbolsAt(
+function definitionSymbolsAt(
   index: ScipIndex,
-  resolution: JavaImplementationResolution
+  relativePath: string,
+  line: number,
+  displayName: string
 ): string[] {
   return index
-    .getOccurrences(resolution.implementationSourceFile)
+    .getOccurrences(relativePath)
     .filter(
       (occurrence) =>
         isDefinition(occurrence) &&
-        occurrenceStartLine(occurrence) ===
-          resolution.implementationLine - 1
+        occurrenceStartLine(occurrence) === line - 1
     )
     .filter((occurrence) => {
       const information = index.getSymbolInformation(
         occurrence.symbol
       );
-
-      return (
-        information?.displayName ===
-        resolution.implementationMethodName
-      );
+      return information?.displayName === displayName;
     })
     .map((occurrence) => occurrence.symbol);
+}
+
+function definitionLine(
+  index: ScipIndex,
+  symbol: string
+): number | undefined {
+  const document = index.getDefiningDocument(symbol);
+  if (!document) return undefined;
+
+  const occurrence = document.occurrences.find(
+    (item) =>
+      item.symbol === symbol &&
+      isDefinition(item)
+  );
+
+  const line = occurrence
+    ? occurrenceStartLine(occurrence)
+    : undefined;
+
+  return line === undefined ? undefined : line + 1;
+}
+
+function implementationSymbolsAt(
+  index: ScipIndex,
+  resolution: JavaImplementationResolution
+): string[] {
+  return definitionSymbolsAt(
+    index,
+    resolution.implementationSourceFile,
+    resolution.implementationDefinitionLine,
+    resolution.implementationMethodName
+  );
 }
 
 function hasExpectedImplementationRelationship(
@@ -93,7 +150,9 @@ function hasExpectedImplementationRelationship(
       target?.displayName ===
         resolution.interfaceMethodName &&
       targetDocument?.relativePath ===
-        resolution.interfaceSourceFile
+        resolution.interfaceSourceFile &&
+      definitionLine(index, relationship.symbol) ===
+        resolution.interfaceDefinitionLine
     );
   });
 }
@@ -151,5 +210,146 @@ export function compareJavaImplementationsWithScip(
     checked: resolutions.length,
     matched: resolutions.length - mismatches.length,
     mismatches
+  };
+}
+
+function manualResolutionMatchesScip(
+  resolution: JavaImplementationResolution,
+  endpoint: JavaInterfaceEndpointCandidate,
+  implementationSourceFile: string,
+  implementationDefinitionLine: number
+): boolean {
+  return (
+    resolution.interfaceSourceFile ===
+      endpoint.interfaceSourceFile &&
+    resolution.interfaceDefinitionLine ===
+      endpoint.interfaceDefinitionLine &&
+    resolution.interfaceMethodName ===
+      endpoint.interfaceMethodName &&
+    resolution.interfaceArity ===
+      endpoint.interfaceArity &&
+    resolution.implementationSourceFile ===
+      implementationSourceFile &&
+    resolution.implementationDefinitionLine ===
+      implementationDefinitionLine &&
+    resolution.implementationMethodName ===
+      endpoint.interfaceMethodName
+  );
+}
+
+export function compareScipJavaImplementationsWithManual(
+  resolutions: readonly JavaImplementationResolution[],
+  endpoints: readonly JavaInterfaceEndpointCandidate[],
+  index: ScipIndex
+): JavaScipReverseResult {
+  const mismatches: JavaScipReverseMismatch[] = [];
+  let implementationsChecked = 0;
+  let matched = 0;
+
+  for (const endpoint of endpoints) {
+    if (!index.getDocument(endpoint.interfaceSourceFile)) {
+      mismatches.push({
+        endpoint,
+        reason: "interface-document-missing",
+        interfaceSymbols: []
+      });
+      continue;
+    }
+
+    const interfaceSymbols = definitionSymbolsAt(
+      index,
+      endpoint.interfaceSourceFile,
+      endpoint.interfaceDefinitionLine,
+      endpoint.interfaceMethodName
+    );
+
+    if (interfaceSymbols.length === 0) {
+      mismatches.push({
+        endpoint,
+        reason: "interface-definition-missing",
+        interfaceSymbols
+      });
+      continue;
+    }
+
+    for (const interfaceSymbol of interfaceSymbols) {
+      for (
+        const implementationSymbol of
+        index.getImplementations(interfaceSymbol)
+      ) {
+        const implementationDocument =
+          index.getDefiningDocument(implementationSymbol);
+
+        if (!implementationDocument) {
+          continue;
+        }
+
+        implementationsChecked += 1;
+
+        const implementationDefinitionLine =
+          definitionLine(index, implementationSymbol);
+
+        if (implementationDefinitionLine === undefined) {
+          mismatches.push({
+            endpoint,
+            reason: "implementation-definition-missing",
+            interfaceSymbols,
+            implementationSymbol,
+            implementationSourceFile:
+              implementationDocument.relativePath
+          });
+          continue;
+        }
+
+        const found = resolutions.some((resolution) =>
+          manualResolutionMatchesScip(
+            resolution,
+            endpoint,
+            implementationDocument.relativePath,
+            implementationDefinitionLine
+          )
+        );
+
+        if (!found) {
+          mismatches.push({
+            endpoint,
+            reason: "manual-resolution-missing",
+            interfaceSymbols,
+            implementationSymbol,
+            implementationSourceFile:
+              implementationDocument.relativePath,
+            implementationDefinitionLine
+          });
+          continue;
+        }
+
+        matched += 1;
+      }
+    }
+  }
+
+  return {
+    endpointsChecked: endpoints.length,
+    implementationsChecked,
+    matched,
+    mismatches
+  };
+}
+
+export function compareJavaImplementationParityWithScip(
+  resolutions: readonly JavaImplementationResolution[],
+  endpoints: readonly JavaInterfaceEndpointCandidate[],
+  index: ScipIndex
+): JavaScipParityResult {
+  return {
+    manualToScip: compareJavaImplementationsWithScip(
+      resolutions,
+      index
+    ),
+    scipToManual: compareScipJavaImplementationsWithManual(
+      resolutions,
+      endpoints,
+      index
+    )
   };
 }
