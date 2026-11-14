@@ -225,6 +225,121 @@ function isRepositoryLocalIdentifier(
   );
 }
 
+function resolveTransportExpression(
+  expression: ts.Expression,
+  checker: ts.TypeChecker,
+  repository: ResolvedTypeScriptRepository,
+  seen = new Set<ts.Symbol>()
+): TransportBinding | undefined {
+  if (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression)
+  ) {
+    return resolveTransportExpression(
+      expression.expression,
+      checker,
+      repository,
+      seen
+    );
+  }
+
+  if (ts.isIdentifier(expression)) {
+    if (
+      expression.text === "fetch" &&
+      !isRepositoryLocalIdentifier(
+        expression,
+        checker,
+        repository
+      )
+    ) {
+      return {
+        module: "fetch",
+        importedName: "default"
+      };
+    }
+
+    const direct = transportBindings(
+      expression.getSourceFile(),
+      repository.httpModules
+    ).get(expression.text);
+
+    if (direct) return direct;
+
+    let symbol = checker.getSymbolAtLocation(expression);
+
+    if (
+      symbol &&
+      (symbol.flags & ts.SymbolFlags.Alias) !== 0
+    ) {
+      symbol = checker.getAliasedSymbol(symbol);
+    }
+
+    if (!symbol || seen.has(symbol)) {
+      return undefined;
+    }
+
+    seen.add(symbol);
+
+    for (const declaration of symbol.declarations ?? []) {
+      if (
+        ts.isVariableDeclaration(declaration) &&
+        declaration.initializer
+      ) {
+        const resolved = resolveTransportExpression(
+          declaration.initializer,
+          checker,
+          repository,
+          seen
+        );
+        if (resolved) return resolved;
+      }
+    }
+
+    return undefined;
+  }
+
+  if (ts.isPropertyAccessExpression(expression)) {
+    const base = resolveTransportExpression(
+      expression.expression,
+      checker,
+      repository,
+      seen
+    );
+
+    return base
+      ? {
+          ...base,
+          importedName: expression.name.text
+        }
+      : undefined;
+  }
+
+  if (
+    ts.isElementAccessExpression(expression) &&
+    expression.argumentExpression &&
+    ts.isStringLiteral(expression.argumentExpression)
+  ) {
+    const base = resolveTransportExpression(
+      expression.expression,
+      checker,
+      repository,
+      seen
+    );
+
+    return base
+      ? {
+          ...base,
+          importedName:
+            expression.argumentExpression.text
+        }
+      : undefined;
+  }
+
+  return undefined;
+}
+
 function staticPath(
   expression: ts.Expression | undefined
 ): string | undefined {
@@ -992,10 +1107,6 @@ export async function analyzeTypeScriptRepository(
         absoluteFile,
         repository
       );
-    const bindings = transportBindings(
-      sourceFile,
-      repository.httpModules
-    );
     const moduleId = moduleScopeId(sourceRelative);
 
     for (const statement of sourceFile.statements) {
@@ -1114,59 +1225,35 @@ export async function analyzeTypeScriptRepository(
         let method: string | undefined;
         let requestPath: string | undefined;
 
-        if (
-          ts.isIdentifier(node.expression) &&
-          node.expression.text === "fetch" &&
-          !isRepositoryLocalIdentifier(
+        const transportBinding =
+          resolveTransportExpression(
             node.expression,
             checker,
             repository
-          )
-        ) {
-          transport = "fetch";
-          method = fetchMethod(node);
-          requestPath = staticPath(
-            node.arguments[0]
           );
-        } else {
-          const root = rootIdentifier(
-            node.expression
-          );
-          const binding = root
-            ? bindings.get(root.text)
-            : undefined;
 
-          if (binding) {
-            transport = binding.module;
+        if (transportBinding) {
+          transport = transportBinding.module;
+
+          if (transport === "fetch") {
+            method = fetchMethod(node);
+            requestPath = staticPath(
+              node.arguments[0]
+            );
+          } else {
+            const candidate =
+              transportBinding.importedName
+                ?.toLowerCase();
 
             if (
-              ts.isPropertyAccessExpression(
-                node.expression
-              )
+              candidate &&
+              HTTP_METHODS.has(candidate)
             ) {
-              const candidate =
-                node.expression.name.text.toLowerCase();
-              if (HTTP_METHODS.has(candidate)) {
-                method =
-                  candidate.toUpperCase();
-                requestPath = staticPath(
-                  node.arguments[0]
-                );
-              }
-            } else if (
-              ts.isIdentifier(node.expression) &&
-              binding.importedName &&
-              HTTP_METHODS.has(
-                binding.importedName.toLowerCase()
-              )
-            ) {
-              method =
-                binding.importedName.toUpperCase();
+              method = candidate.toUpperCase();
               requestPath = staticPath(
                 node.arguments[0]
               );
             } else if (
-              ts.isIdentifier(node.expression) &&
               node.arguments[0] &&
               ts.isObjectLiteralExpression(
                 node.arguments[0]
