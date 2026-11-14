@@ -91,6 +91,12 @@ scope, because ES module initialization can have side effects. Therefore a top-l
 `fetch()` in an imported module remains reachable even when no imported function is
 called.
 
+Known standard higher-order APIs such as Array `map/forEach/filter/some/every/find`,
+`reduce`, `flatMap`, `sort`, and Promise `then/catch/finally` contribute
+callback call edges. Repository-local callback values passed to calls whose execution
+semantics are not known do not create guessed call edges; instead `http-reach`
+evidence becomes `PARTIAL`.
+
 The tool deliberately does not flag arbitrary local types just because their shape resembles an OpenAPI schema. A local DTO becomes relevant when it actually crosses a contract/generated boundary.
 
 ## Repository topology
@@ -203,7 +209,7 @@ npm run arch-gate -- check --config ./arch-gate.yml --format json
 This is still a PoC.
 
 - TypeScript resolution is compiler-based but not SCIP-based.
-- Call reachability follows statically resolved call targets; higher-order value flow, dynamic dispatch and arbitrary function-value propagation are intentionally limited.
+- Call reachability follows statically resolved call targets and a bounded set of known standard callback APIs. Unknown higher-order function execution is reported as partial evidence; arbitrary interprocedural value flow and dynamic dispatch are intentionally not inferred.
 - Java endpoint extraction supports explicitly configured JAX-RS repositories, including repository-local interface metadata inheritance. Full Java type resolution, external interface inheritance, and Spring MVC are not implemented yet.
 - Repository relations support direct edges and explicit bounded paths; unrestricted graph reachability and wildcard graph queries are intentionally not implemented.
 - No baseline/diff/impact/why graph tooling yet.

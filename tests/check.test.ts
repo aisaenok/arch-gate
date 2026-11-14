@@ -152,3 +152,58 @@ test("imported module top-level HTTP side effect remains reachable", async () =>
     true
   );
 });
+
+
+test("Array.map callback function value contributes HTTP reachability", async () => {
+  const result = await runCheck(
+    config(
+      "pl-callback-array",
+      [],
+      ["src/shared/http"]
+    )
+  );
+
+  assert.equal(result.status, "fail");
+  assert.equal(
+    result.violations.some(
+      (violation) => violation.rule === "API001"
+    ),
+    true
+  );
+});
+
+test("inline Array.map callback contributes HTTP reachability", async () => {
+  const result = await runCheck(
+    config(
+      "pl-callback-inline",
+      [],
+      ["src/shared/http"]
+    )
+  );
+
+  assert.equal(result.status, "fail");
+  assert.equal(
+    result.violations.some(
+      (violation) => violation.rule === "API001"
+    ),
+    true
+  );
+});
+
+test("unknown higher-order function with local callback makes HTTP reachability partial", async () => {
+  const result = await runCheck(
+    config(
+      "pl-callback-unknown",
+      [],
+      ["src/shared/http"]
+    )
+  );
+
+  assert.equal(result.status, "partial");
+  assert.equal(result.violations.length, 0);
+  assert.equal(result.gaps.length, 1);
+  assert.match(
+    result.gaps[0]?.message ?? "",
+    /unknown callback execution semantics/
+  );
+});
