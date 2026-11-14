@@ -207,3 +207,54 @@ test("unknown higher-order function with local callback makes HTTP reachability 
     /unknown callback execution semantics/
   );
 });
+
+
+test("interface-typed variable with concrete initializer resolves to concrete HTTP method", async () => {
+  const result = await runCheck(
+    config(
+      "pl-interface-concrete",
+      [],
+      ["src/shared/http"]
+    )
+  );
+
+  assert.equal(result.status, "fail");
+  assert.equal(
+    result.violations.some(
+      (violation) => violation.rule === "API001"
+    ),
+    true
+  );
+});
+
+test("interface parameter with HTTP-capable local implementation makes reachability partial", async () => {
+  const result = await runCheck(
+    config(
+      "pl-interface-parameter-http",
+      [],
+      ["src/shared/http"]
+    )
+  );
+
+  assert.equal(result.status, "partial");
+  assert.equal(result.violations.length, 0);
+  assert.equal(result.gaps.length, 1);
+  assert.match(
+    result.gaps[0]?.message ?? "",
+    /interface dispatch site/
+  );
+});
+
+test("interface parameter with only safe local implementation does not make HTTP reachability partial", async () => {
+  const result = await runCheck(
+    config(
+      "pl-interface-parameter-safe",
+      [],
+      ["src/shared/http"]
+    )
+  );
+
+  assert.equal(result.status, "pass");
+  assert.deepEqual(result.violations, []);
+  assert.deepEqual(result.gaps, []);
+});

@@ -97,6 +97,14 @@ callback call edges. Repository-local callback values passed to calls whose exec
 semantics are not known do not create guessed call edges; instead `http-reach`
 evidence becomes `PARTIAL`.
 
+For interface dispatch, a statically visible concrete receiver such as
+`const client: HttpClient = new FetchClient()` is resolved to the concrete method.
+If the receiver binding is unknown (for example a DI/function parameter), arch-gate
+does not pretend that every compatible class is definitely invoked. Instead it checks
+repository-local compatible implementations; if any of them can reach HTTP,
+`http-reach` evidence becomes `PARTIAL`. Interface dispatch with only local
+implementations that cannot reach HTTP does not degrade evidence.
+
 The tool deliberately does not flag arbitrary local types just because their shape resembles an OpenAPI schema. A local DTO becomes relevant when it actually crosses a contract/generated boundary.
 
 ## Repository topology
@@ -209,7 +217,7 @@ npm run arch-gate -- check --config ./arch-gate.yml --format json
 This is still a PoC.
 
 - TypeScript resolution is compiler-based but not SCIP-based.
-- Call reachability follows statically resolved call targets and a bounded set of known standard callback APIs. Unknown higher-order function execution is reported as partial evidence; arbitrary interprocedural value flow and dynamic dispatch are intentionally not inferred.
+- Call reachability follows statically resolved call targets, a bounded set of known standard callback APIs, and exact concrete bindings for interface-typed receivers. Unknown higher-order function execution and unresolved HTTP-capable interface dispatch are reported as partial evidence; arbitrary interprocedural value flow and runtime DI container resolution are intentionally not inferred.
 - Java endpoint extraction supports explicitly configured JAX-RS repositories, including repository-local interface metadata inheritance. Full Java type resolution, external interface inheritance, and Spring MVC are not implemented yet.
 - Repository relations support direct edges and explicit bounded paths; unrestricted graph reachability and wildcard graph queries are intentionally not implemented.
 - No baseline/diff/impact/why graph tooling yet.
