@@ -149,3 +149,12 @@ test("aliased axios create factory preserves instance provenance", async () => {
   assert.equal(calls[0]?.transport, "axios");
   assert.equal(calls[0]?.method, "GET");
 });
+
+
+test("axios.create itself is not emitted as an HTTP call", async () => {
+  const analysis = await analyzeTypeScriptRepository(
+    repository("pl-axios-create-only")
+  );
+
+  assert.equal(httpCalls(analysis.facts).length, 0);
+});
