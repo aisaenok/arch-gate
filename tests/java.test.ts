@@ -154,3 +154,13 @@ test("concrete class inherits JAX-RS endpoint metadata from implemented interfac
     "src/main/java/dev/archgate/ApplicationController.java"
   );
 });
+
+
+test("inherited JAX-RS metadata is not attached to a different overload", async () => {
+  const analysis = await analyzeJavaRepository(
+    javaRepository("bh-jaxrs-inherited-wrong-overload")
+  );
+
+  assert.equal(analysis.evidence[0]?.status, "complete");
+  assert.equal(analysis.facts.length, 0);
+});
