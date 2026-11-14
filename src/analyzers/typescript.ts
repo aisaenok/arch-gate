@@ -245,6 +245,27 @@ function resolveTransportExpression(
     );
   }
 
+  if (ts.isCallExpression(expression)) {
+    const factory = resolveTransportExpression(
+      expression.expression,
+      checker,
+      repository,
+      seen
+    );
+
+    if (
+      factory?.module === "axios" &&
+      factory.importedName === "create"
+    ) {
+      return {
+        module: "axios",
+        importedName: "default"
+      };
+    }
+
+    return undefined;
+  }
+
   if (ts.isIdentifier(expression)) {
     if (
       expression.text === "fetch" &&
