@@ -55,7 +55,13 @@ Intent produces:
 - `intent-api-call`
 - `intent-wire-type`
 
-Java repositories configured with `frameworks: [jax-rs]` produce `backend-endpoint` facts from parsed Java syntax trees. The analyzer combines class/method `@Path` values with `@GET/@POST/@PUT/@PATCH/@DELETE/@HEAD/@OPTIONS` and normalizes them to the same `METHOD + path` key used by OpenAPI. If Java syntax cannot be parsed, endpoint evidence becomes `PARTIAL` rather than producing a false green result.
+Java repositories configured with `frameworks: [jax-rs]` produce `backend-endpoint` facts from parsed Java syntax trees. The analyzer combines class/method `@Path` values with `@GET/@POST/@PUT/@PATCH/@DELETE/@HEAD/@OPTIONS` and normalizes them to the same `METHOD + path` key used by OpenAPI.
+
+Annotated interfaces are treated as endpoint metadata declarations, not implementations. A `backend-endpoint` is emitted for an interface-declared endpoint only when a repository-local class actually `implements` that interface and declares the matching method. The fact source and `className` point to the concrete class, while HTTP/path/operation metadata is inherited from the interface.
+
+Interface method matching currently uses method name + arity rather than a full Java symbol/type solver. Same-name/same-arity overloads that differ only by parameter types remain a deliberate limitation.
+
+If Java syntax cannot be parsed, endpoint evidence becomes `PARTIAL` rather than producing a false green result.
 
 ## TypeScript semantics
 
@@ -192,7 +198,7 @@ This is still a PoC.
 
 - TypeScript resolution is compiler-based but not SCIP-based.
 - Call reachability follows statically resolved call targets; higher-order value flow, dynamic dispatch and arbitrary function-value propagation are intentionally limited.
-- Java endpoint extraction currently supports explicitly configured JAX-RS repositories; Spring MVC is not implemented yet.
+- Java endpoint extraction supports explicitly configured JAX-RS repositories, including repository-local interface metadata inheritance. Full Java type resolution, external interface inheritance, and Spring MVC are not implemented yet.
 - Repository relations support direct edges and explicit bounded paths; unrestricted graph reachability and wildcard graph queries are intentionally not implemented.
 - No baseline/diff/impact/why graph tooling yet.
 - The YAML DSL stays intentionally small; semantic complexity belongs in analyzers/facts, not in increasingly programmable YAML.

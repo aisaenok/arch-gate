@@ -29,10 +29,35 @@ interface AnnotationInfo {
 interface EndpointDraft {
   className: string;
   methodName: string;
+  arity: number;
   offset: number;
   operationId: string;
   method: string;
   path: string;
+}
+
+interface ParsedFile {
+  file: string;
+  source: string;
+  root: SyntaxNode;
+  packageName: string;
+  imports: Map<string, string>;
+}
+
+interface InterfaceInfo {
+  name: string;
+  fqn: string;
+  endpoints: EndpointDraft[];
+}
+
+interface ClassInfo {
+  name: string;
+  fqn: string;
+  file: ParsedFile;
+  node: SyntaxNode;
+  methods: Map<string, SyntaxNode>;
+  implementedInterfaces: string[];
+  directEndpoints: EndpointDraft[];
 }
 
 function relativeToRoot(file: string, root: string): string {
@@ -86,9 +111,7 @@ function directChild(
   node: SyntaxNode,
   name: string
 ): SyntaxNode | undefined {
-  return directChildren(node).find(
-    (child) => child.name === name
-  );
+  return directChildren(node).find((child) => child.name === name);
 }
 
 function firstDescendant(
@@ -188,9 +211,7 @@ function joinPaths(base: string, child: string): string {
     .filter(Boolean)
     .map((item) => item.replace(/^\/+|\/+$/g, ""));
 
-  return parts.length === 0
-    ? "/"
-    : `/${parts.join("/")}`;
+  return parts.length === 0 ? "/" : `/${parts.join("/")}`;
 }
 
 function definitionName(
@@ -234,6 +255,51 @@ function hasParseError(root: SyntaxNode): boolean {
   return false;
 }
 
+function methodName(
+  methodNode: SyntaxNode,
+  source: string
+): string {
+  const directDefinition = directChild(
+    methodNode,
+    "Definition"
+  );
+  if (directDefinition) {
+    return sourceText(directDefinition, source);
+  }
+
+  const header = directChild(methodNode, "methodHeader");
+  const declarator = header
+    ? firstDescendant(header, "methodDeclarator")
+    : undefined;
+
+  return declarator
+    ? definitionName(declarator, source)
+    : "";
+}
+
+function methodArity(
+  methodNode: SyntaxNode
+): number {
+  const parameters = directChild(
+    methodNode,
+    "FormalParameters"
+  );
+  if (!parameters) return 0;
+
+  return directChildren(parameters).filter(
+    (child) =>
+      child.name === "FormalParameter" ||
+      child.name === "SpreadParameter"
+  ).length;
+}
+
+function methodSignature(
+  name: string,
+  arity: number
+): string {
+  return `${name}/${arity}`;
+}
+
 function endpointFromMethod(
   methodNode: SyntaxNode,
   className: string,
@@ -248,28 +314,20 @@ function endpointFromMethod(
   );
   if (!httpAnnotation) return undefined;
 
-  const method =
-    HTTP_ANNOTATIONS.get(httpAnnotation.name)!;
+  const method = HTTP_ANNOTATIONS.get(httpAnnotation.name)!;
   const methodPath =
-    methodAnnotations.find(
-      (annotation) => annotation.name === "Path"
-    )?.value ?? "";
+    methodAnnotations.find((annotation) => annotation.name === "Path")
+      ?.value ?? "";
 
   const operationId =
     methodAnnotations
       .find((annotation) => annotation.name === "Operation")
       ?.attributes.get("operationId") ?? "";
 
-  const header = directChild(methodNode, "methodHeader");
-  const declarator = header
-    ? firstDescendant(header, "methodDeclarator")
-    : undefined;
-
   return {
     className,
-    methodName: declarator
-      ? definitionName(declarator, source)
-      : "",
+    methodName: methodName(methodNode, source),
+    arity: methodArity(methodNode),
     offset: methodNode.from,
     operationId,
     method,
@@ -277,65 +335,157 @@ function endpointFromMethod(
   };
 }
 
-function collectTypeEndpoints(
+function packageName(source: string): string {
+  return (
+    source.match(
+      /^\s*package\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*;/m
+    )?.[1] ?? ""
+  );
+}
+
+function imports(source: string): Map<string, string> {
+  const result = new Map<string, string>();
+  const pattern =
+    /^\s*import\s+(?!static\b)([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)\s*;/gm;
+
+  for (const match of source.matchAll(pattern)) {
+    const fqn = match[1];
+    const simple = fqn.slice(fqn.lastIndexOf(".") + 1);
+    result.set(simple, fqn);
+  }
+
+  return result;
+}
+
+function typeFqn(packageValue: string, name: string): string {
+  return packageValue ? `${packageValue}.${name}` : name;
+}
+
+function implementedTypeNames(
+  node: SyntaxNode,
+  source: string
+): string[] {
+  const superInterfaces = directChild(
+    node,
+    "SuperInterfaces"
+  );
+  if (!superInterfaces) return [];
+
+  const interfaceList =
+    directChild(
+      superInterfaces,
+      "InterfaceTypeList"
+    ) ??
+    firstDescendant(
+      superInterfaces,
+      "InterfaceTypeList"
+    );
+  if (!interfaceList) return [];
+
+  return directChildren(interfaceList)
+    .filter((child) => child.name === "TypeName")
+    .map((child) => sourceText(child, source))
+    .filter(Boolean);
+}
+
+function resolveTypeName(
+  raw: string,
+  file: ParsedFile,
+  interfacesBySimpleName: Map<string, InterfaceInfo[]>
+): string | undefined {
+  const clean = raw.replace(/\s+/g, "");
+
+  if (clean.includes(".")) return clean;
+
+  const imported = file.imports.get(clean);
+  if (imported) return imported;
+
+  const samePackage = typeFqn(file.packageName, clean);
+  const samePackageInterface =
+    interfacesBySimpleName
+      .get(clean)
+      ?.find((item) => item.fqn === samePackage);
+  if (samePackageInterface) return samePackage;
+
+  const candidates = interfacesBySimpleName.get(clean) ?? [];
+  return candidates.length === 1 ? candidates[0].fqn : undefined;
+}
+
+function collectMethodNodes(
+  typeNode: SyntaxNode,
+  source: string
+): Map<string, SyntaxNode> {
+  const body =
+    directChild(typeNode, "ClassBody") ??
+    directChild(typeNode, "InterfaceBody");
+  const result = new Map<string, SyntaxNode>();
+  if (!body) return result;
+
+  for (const child of directChildren(body)) {
+    if (child.name !== "MethodDeclaration") continue;
+    const name = methodName(child, source);
+    if (name) {
+      result.set(
+        methodSignature(
+          name,
+          methodArity(child)
+        ),
+        child
+      );
+    }
+  }
+
+  return result;
+}
+
+function directEndpoints(
   typeNode: SyntaxNode,
   source: string
 ): EndpointDraft[] {
   const modifiers = directChild(typeNode, "Modifiers");
   const classAnnotations = annotations(modifiers, source);
   const classPath =
-    classAnnotations.find(
-      (annotation) => annotation.name === "Path"
-    )?.value ?? "";
+    classAnnotations.find((annotation) => annotation.name === "Path")
+      ?.value ?? "";
   const className = definitionName(typeNode, source);
 
   const body =
     directChild(typeNode, "ClassBody") ??
     directChild(typeNode, "InterfaceBody");
-
   if (!body) return [];
 
   const endpoints: EndpointDraft[] = [];
-
   for (const child of directChildren(body)) {
-    if (child.name === "MethodDeclaration") {
-      const endpoint = endpointFromMethod(
-        child,
-        className,
-        classPath,
-        source
-      );
-      if (endpoint) endpoints.push(endpoint);
-      continue;
-    }
-
-    if (
-      child.name === "ClassDeclaration" ||
-      child.name === "InterfaceDeclaration"
-    ) {
-      endpoints.push(...collectTypeEndpoints(child, source));
-    }
+    if (child.name !== "MethodDeclaration") continue;
+    const endpoint = endpointFromMethod(
+      child,
+      className,
+      classPath,
+      source
+    );
+    if (endpoint) endpoints.push(endpoint);
   }
 
   return endpoints;
 }
 
-function collectEndpoints(
-  root: SyntaxNode,
-  source: string
-): EndpointDraft[] {
-  const endpoints: EndpointDraft[] = [];
+function topLevelTypes(
+  file: ParsedFile
+): Array<{ node: SyntaxNode; kind: "class" | "interface" }> {
+  const result: Array<{
+    node: SyntaxNode;
+    kind: "class" | "interface";
+  }> = [];
 
-  for (const child of directChildren(root)) {
-    if (
-      child.name === "ClassDeclaration" ||
-      child.name === "InterfaceDeclaration"
-    ) {
-      endpoints.push(...collectTypeEndpoints(child, source));
+  for (const child of directChildren(file.root)) {
+    if (child.name === "ClassDeclaration") {
+      result.push({ node: child, kind: "class" });
+    } else if (child.name === "InterfaceDeclaration") {
+      result.push({ node: child, kind: "interface" });
     }
   }
 
-  return endpoints;
+  return result;
 }
 
 function endpointFacts(
@@ -358,10 +508,7 @@ function endpointFacts(
     operationId: endpoint.operationId,
     method: endpoint.method,
     path: endpoint.path,
-    operationKey: operationKey(
-      endpoint.method,
-      endpoint.path
-    )
+    operationKey: operationKey(endpoint.method, endpoint.path)
   }));
 }
 
@@ -394,7 +541,7 @@ export async function analyzeJavaRepository(
     )
   ];
 
-  const facts: Fact[] = [];
+  const parsedFiles: ParsedFile[] = [];
   const parseFailures: string[] = [];
 
   for (const file of files) {
@@ -403,18 +550,116 @@ export async function analyzeJavaRepository(
 
     if (hasParseError(tree.topNode)) {
       parseFailures.push(
-        `${relativeToRoot(file, repository.root)}: Java syntax tree contains error nodes`
+        `${relativeToRoot(
+          file,
+          repository.root
+        )}: Java syntax tree contains error nodes`
       );
       continue;
     }
 
-    const endpoints = collectEndpoints(tree.topNode, source);
-    facts.push(...endpointFacts(
-      repository,
+    parsedFiles.push({
       file,
       source,
-      endpoints
-    ));
+      root: tree.topNode,
+      packageName: packageName(source),
+      imports: imports(source)
+    });
+  }
+
+  const interfaces = new Map<string, InterfaceInfo>();
+  const interfacesBySimpleName = new Map<
+    string,
+    InterfaceInfo[]
+  >();
+  const classes: ClassInfo[] = [];
+
+  for (const file of parsedFiles) {
+    for (const type of topLevelTypes(file)) {
+      const name = definitionName(type.node, file.source);
+      const fqn = typeFqn(file.packageName, name);
+
+      if (type.kind === "interface") {
+        const info: InterfaceInfo = {
+          name,
+          fqn,
+          endpoints: directEndpoints(type.node, file.source)
+        };
+        interfaces.set(fqn, info);
+        const byName = interfacesBySimpleName.get(name) ?? [];
+        byName.push(info);
+        interfacesBySimpleName.set(name, byName);
+        continue;
+      }
+
+      classes.push({
+        name,
+        fqn,
+        file,
+        node: type.node,
+        methods: collectMethodNodes(type.node, file.source),
+        implementedInterfaces: implementedTypeNames(
+          type.node,
+          file.source
+        ),
+        directEndpoints: directEndpoints(type.node, file.source)
+      });
+    }
+  }
+
+  const facts: Fact[] = [];
+
+  for (const info of classes) {
+    const inheritedEndpoints: EndpointDraft[] = [];
+
+    for (const rawInterface of info.implementedInterfaces) {
+      const resolved = resolveTypeName(
+        rawInterface,
+        info.file,
+        interfacesBySimpleName
+      );
+      if (!resolved) continue;
+
+      const interfaceInfo = interfaces.get(resolved);
+      if (!interfaceInfo) continue;
+
+      for (const endpoint of interfaceInfo.endpoints) {
+        const implementationMethod = info.methods.get(
+          methodSignature(
+            endpoint.methodName,
+            endpoint.arity
+          )
+        );
+        if (!implementationMethod) continue;
+
+        inheritedEndpoints.push({
+          ...endpoint,
+          className: info.name,
+          offset: implementationMethod.from
+        });
+      }
+    }
+
+    const seen = new Set<string>();
+    const endpoints = [
+      ...info.directEndpoints,
+      ...inheritedEndpoints
+    ].filter((endpoint) => {
+      const key =
+        `${endpoint.methodName}|${endpoint.method}|${endpoint.path}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    facts.push(
+      ...endpointFacts(
+        repository,
+        info.file.file,
+        info.file.source,
+        endpoints
+      )
+    );
   }
 
   const evidence: FactEvidence = parseFailures.length
@@ -424,7 +669,9 @@ export async function analyzeJavaRepository(
         factKind: "backend-endpoint",
         status: "partial",
         message:
-          `${parseFailures.length} Java file(s) failed syntax parsing: ${parseFailures.slice(0, 3).join("; ")}`
+          `${parseFailures.length} Java file(s) failed syntax parsing: ${parseFailures
+            .slice(0, 3)
+            .join("; ")}`
       }
     : {
         repositoryId: repository.id,
