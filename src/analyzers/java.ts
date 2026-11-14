@@ -47,7 +47,28 @@ interface ParsedFile {
 interface InterfaceInfo {
   name: string;
   fqn: string;
+  file: ParsedFile;
   endpoints: EndpointDraft[];
+}
+
+export interface JavaImplementationResolution {
+  repositoryId: string;
+  implementationSourceFile: string;
+  implementationLine: number;
+  implementationClassName: string;
+  implementationMethodName: string;
+  implementationArity: number;
+  interfaceSourceFile: string;
+  interfaceName: string;
+  interfaceFqn: string;
+  interfaceMethodName: string;
+  interfaceArity: number;
+}
+
+export interface JavaAnalysisOptions {
+  onImplementationResolution?: (
+    resolution: JavaImplementationResolution
+  ) => void;
 }
 
 interface ClassInfo {
@@ -513,7 +534,8 @@ function endpointFacts(
 }
 
 export async function analyzeJavaRepository(
-  repository: ResolvedJavaRepository
+  repository: ResolvedJavaRepository,
+  options: JavaAnalysisOptions = {}
 ): Promise<AnalysisResult> {
   if (!repository.frameworks.includes("jax-rs")) {
     return {
@@ -602,6 +624,7 @@ export async function analyzeJavaRepository(
         const info: InterfaceInfo = {
           name,
           fqn,
+          file,
           endpoints: directEndpoints(type.node, file.source)
         };
         interfaces.set(fqn, info);
@@ -650,6 +673,29 @@ export async function analyzeJavaRepository(
           )
         );
         if (!implementationMethod) continue;
+
+        options.onImplementationResolution?.({
+          repositoryId: repository.id,
+          implementationSourceFile: relativeToRoot(
+            info.file.file,
+            repository.root
+          ),
+          implementationLine: lineAt(
+            lineStarts(info.file.source),
+            implementationMethod.from
+          ),
+          implementationClassName: info.name,
+          implementationMethodName: endpoint.methodName,
+          implementationArity: endpoint.arity,
+          interfaceSourceFile: relativeToRoot(
+            interfaceInfo.file.file,
+            repository.root
+          ),
+          interfaceName: interfaceInfo.name,
+          interfaceFqn: interfaceInfo.fqn,
+          interfaceMethodName: endpoint.methodName,
+          interfaceArity: endpoint.arity
+        });
 
         inheritedEndpoints.push({
           ...endpoint,
