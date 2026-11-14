@@ -14,6 +14,10 @@ import {
   relatedMemberMatches
 } from "./conditions.js";
 import {
+  FACT_DEFINITIONS,
+  isKnownFactKind
+} from "./facts.js";
+import {
   relatedRepositoryIds,
   repositoryRelationDescription
 } from "./relations.js";
@@ -124,11 +128,37 @@ function baseCoverageGaps(
   );
 }
 
+function repositoryCannotProduceFact(
+  model: ArchitectureModel,
+  factKind: string,
+  repositoryId: string
+): boolean {
+  if (!isKnownFactKind(factKind)) return false;
+
+  const producer = FACT_DEFINITIONS[factKind].producer;
+  if (producer === "intent") return false;
+
+  const repository = model.repositories[repositoryId];
+  return (
+    repository !== undefined &&
+    repository.type !== producer
+  );
+}
+
 function evidenceIsComplete(
   model: ArchitectureModel,
   factKind: string,
   repositoryId: string
 ): boolean {
+  if (
+    repositoryCannotProduceFact(
+      model,
+      factKind,
+      repositoryId
+    )
+  ) {
+    return true;
+  }
   const evidence = model.evidence.filter(
     (item) =>
       item.factKind === factKind &&
