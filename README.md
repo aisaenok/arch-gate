@@ -41,7 +41,7 @@ TypeScript currently produces:
 
 - `http-call` — an actual call to `fetch` or a configured HTTP module, not merely an import;
 - `module-dependency` — resolved source-module dependency facts;
-- `http-reach` — transitive reachability from a source file to an HTTP call, including whether the path crosses generated runtime;
+- `http-reach` — transitive call reachability from a source file to an HTTP call, including whether the call path crosses generated runtime;
 - `type-declaration` — type declarations with basic declaration provenance;
 - `api-boundary-type` — argument types that cross into generated runtime, with contract/generated provenance.
 
@@ -63,11 +63,21 @@ The TypeScript analyzer now uses a `Program` and `TypeChecker`, not isolated AST
 
 This enables:
 
-- import resolution;
-- transitive module reachability;
-- resolving calls into generated runtime;
-- checking actual argument type provenance at that boundary;
-- distinguishing an unused `axios` import from an HTTP call.
+- import resolution and separate `module-dependency` facts;
+- resolving actual call targets with the TypeChecker;
+- transitive call reachability through local functions, wrappers and generated runtime;
+- checking actual argument type provenance at the generated boundary;
+- distinguishing symbol availability from execution.
+
+`http-reach` is deliberately not built from the module dependency graph anymore. An
+unused imported wrapper does not imply HTTP reachability, and calling one safe
+function from a module does not make unrelated HTTP functions in that module
+reachable.
+
+Imports still contribute one execution edge into the imported module's top-level
+scope, because ES module initialization can have side effects. Therefore a top-level
+`fetch()` in an imported module remains reachable even when no imported function is
+called.
 
 The tool deliberately does not flag arbitrary local types just because their shape resembles an OpenAPI schema. A local DTO becomes relevant when it actually crosses a contract/generated boundary.
 
@@ -181,7 +191,7 @@ npm run arch-gate -- check --config ./arch-gate.yml --format json
 This is still a PoC.
 
 - TypeScript resolution is compiler-based but not SCIP-based.
-- Cross-function value/data-flow is intentionally limited.
+- Call reachability follows statically resolved call targets; higher-order value flow, dynamic dispatch and arbitrary function-value propagation are intentionally limited.
 - Java endpoint extraction currently supports explicitly configured JAX-RS repositories; Spring MVC is not implemented yet.
 - Repository relations support direct edges and explicit bounded paths; unrestricted graph reachability and wildcard graph queries are intentionally not implemented.
 - No baseline/diff/impact/why graph tooling yet.
