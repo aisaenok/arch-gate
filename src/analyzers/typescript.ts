@@ -20,6 +20,34 @@ const HTTP_METHODS = new Set([
   "options"
 ]);
 
+const STANDARD_CALLBACK_METHODS = new Map<
+  string,
+  readonly number[]
+>([
+  ["map", [0]],
+  ["forEach", [0]],
+  ["filter", [0]],
+  ["some", [0]],
+  ["every", [0]],
+  ["find", [0]],
+  ["findIndex", [0]],
+  ["flatMap", [0]],
+  ["reduce", [0]],
+  ["reduceRight", [0]],
+  ["sort", [0]],
+  ["then", [0, 1]],
+  ["catch", [0]],
+  ["finally", [0]]
+]);
+
+const STANDARD_CALLBACK_FUNCTIONS = new Map<
+  string,
+  readonly number[]
+>([
+  ["queueMicrotask", [0]],
+  ["requestAnimationFrame", [0]]
+]);
+
 interface TransportBinding {
   module: string;
   importedName?: string;
@@ -578,6 +606,70 @@ function executableScopeForDeclaration(
   return undefined;
 }
 
+function repositoryLocalCallableScope(
+  expression: ts.Expression,
+  checker: ts.TypeChecker,
+  scopeIdByNode: Map<ts.Node, string>,
+  repository: ResolvedTypeScriptRepository
+): string | undefined {
+  if (isExecutableFunction(expression)) {
+    return scopeIdByNode.get(expression);
+  }
+
+  const type = checker.getTypeAtLocation(expression);
+
+  for (const signature of type.getCallSignatures()) {
+    const declaration = signature.declaration;
+    if (!declaration) continue;
+
+    const targetAbsolute =
+      declaration.getSourceFile().fileName;
+
+    if (!isInside(targetAbsolute, repository.root)) {
+      continue;
+    }
+
+    const scope = executableScopeForDeclaration(
+      declaration,
+      scopeIdByNode
+    );
+    if (scope) return scope;
+  }
+
+  return undefined;
+}
+
+function standardCallbackArgumentIndexes(
+  call: ts.CallExpression,
+  declaration: ts.Signature["declaration"]
+): readonly number[] | undefined {
+  if (!declaration) return undefined;
+
+  const declarationFile = declaration.getSourceFile();
+  const basename = path.basename(declarationFile.fileName);
+
+  if (
+    !declarationFile.isDeclarationFile ||
+    !basename.startsWith("lib.")
+  ) {
+    return undefined;
+  }
+
+  if (ts.isPropertyAccessExpression(call.expression)) {
+    return STANDARD_CALLBACK_METHODS.get(
+      call.expression.name.text
+    );
+  }
+
+  if (ts.isIdentifier(call.expression)) {
+    return STANDARD_CALLBACK_FUNCTIONS.get(
+      call.expression.text
+    );
+  }
+
+  return undefined;
+}
+
 function compactFilePath(
   scopeIds: string[],
   scopes: Map<string, ExecutableScope>
@@ -622,6 +714,7 @@ export async function analyzeTypeScriptRepository(
     Set<string>
   >();
   let unresolvedInternalImports = 0;
+  let unresolvedCallbackFlows = 0;
 
   for (const absoluteFile of files) {
     const sourceFile =
@@ -935,6 +1028,40 @@ export async function analyzeTypeScriptRepository(
         const declaration =
           signature?.declaration;
 
+        const callbackIndexes =
+          standardCallbackArgumentIndexes(
+            node,
+            declaration
+          );
+        const knownCallbackIndexes =
+          new Set(callbackIndexes ?? []);
+
+        for (
+          let index = 0;
+          index < node.arguments.length;
+          index += 1
+        ) {
+          const callbackScope =
+            repositoryLocalCallableScope(
+              node.arguments[index]!,
+              checker,
+              scopeIdByNode,
+              repository
+            );
+
+          if (!callbackScope) continue;
+
+          if (knownCallbackIndexes.has(index)) {
+            addEdge(
+              callEdges,
+              scopeId,
+              callbackScope
+            );
+          } else {
+            unresolvedCallbackFlows += 1;
+          }
+        }
+
         if (declaration) {
           const targetAbsolute =
             declaration.getSourceFile().fileName;
@@ -1163,14 +1290,37 @@ export async function analyzeTypeScriptRepository(
     }
   }
 
-  const resolutionStatus =
+  const importResolutionStatus =
     unresolvedInternalImports === 0
       ? "complete"
       : "partial";
-  const resolutionMessage =
+  const importResolutionMessage =
     unresolvedInternalImports === 0
       ? undefined
-      : `${unresolvedInternalImports} relative import(s) could not be resolved; call reachability facts may be incomplete.`;
+      : `${unresolvedInternalImports} relative import(s) could not be resolved.`;
+
+  const reachabilityIssues: string[] = [];
+
+  if (unresolvedInternalImports > 0) {
+    reachabilityIssues.push(
+      `${unresolvedInternalImports} relative import(s) could not be resolved`
+    );
+  }
+
+  if (unresolvedCallbackFlows > 0) {
+    reachabilityIssues.push(
+      `${unresolvedCallbackFlows} repository-local function value(s) were passed to calls with unknown callback execution semantics`
+    );
+  }
+
+  const reachabilityStatus =
+    reachabilityIssues.length === 0
+      ? "complete"
+      : "partial";
+  const reachabilityMessage =
+    reachabilityIssues.length === 0
+      ? undefined
+      : `${reachabilityIssues.join("; ")}; call reachability facts may be incomplete.`;
 
   const evidence: FactEvidence[] = [
     {
@@ -1189,22 +1339,22 @@ export async function analyzeTypeScriptRepository(
       repositoryId: repository.id,
       producer: "typescript",
       factKind: "module-dependency",
-      status: resolutionStatus,
-      message: resolutionMessage
+      status: importResolutionStatus,
+      message: importResolutionMessage
     },
     {
       repositoryId: repository.id,
       producer: "typescript",
       factKind: "http-reach",
-      status: resolutionStatus,
-      message: resolutionMessage
+      status: reachabilityStatus,
+      message: reachabilityMessage
     },
     {
       repositoryId: repository.id,
       producer: "typescript",
       factKind: "api-boundary-type",
-      status: resolutionStatus,
-      message: resolutionMessage
+      status: importResolutionStatus,
+      message: importResolutionMessage
     }
   ];
 
