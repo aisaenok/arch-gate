@@ -61,8 +61,14 @@ export interface RuleSelector {
   where?: EqualitySelector[];
 }
 
-export interface RepositoryRelationMatch {
+export interface RepositoryRelationStep {
   type: string;
+  direction?: RepositoryRelationDirection;
+}
+
+export interface RepositoryRelationMatch {
+  type?: string;
+  path?: RepositoryRelationStep[];
   currentField: string;
   candidateField: string;
   direction?: RepositoryRelationDirection;

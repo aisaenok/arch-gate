@@ -118,6 +118,31 @@ when the only missing repositories have incomplete evidence.
 If a relation-scoped rule has no matching topology edge, the result is `PARTIAL`
 rather than a guessed PASS/FAIL.
 
+For topologies where the fact-bearing repository is not directly adjacent to the
+current repository, use an explicit bounded path:
+
+```yaml
+repositoryRelation:
+  currentField: providerRepositoryId
+  candidateField: repositoryId
+  path:
+    - type: forwards-to
+      direction: outgoing
+    - type: implemented-by
+      direction: incoming
+  quantifier: any
+```
+
+This example traverses:
+
+```text
+bff --forwards-to--> backend <--implemented-by-- contract
+```
+
+The path is exact and finite. `arch-gate` does not perform unrestricted graph
+reachability, wildcard relation matching, or depth-based searches. This keeps the
+topology language deterministic and reviewable.
+
 ## Project policy
 
 See `arch-gate.example.yml`.
@@ -158,6 +183,6 @@ This is still a PoC.
 - TypeScript resolution is compiler-based but not SCIP-based.
 - Cross-function value/data-flow is intentionally limited.
 - Java endpoint extraction currently supports explicitly configured JAX-RS repositories; Spring MVC is not implemented yet.
-- Repository relations scope multi-contract/multi-provider topologies; richer graph queries beyond direct edges are not implemented yet.
+- Repository relations support direct edges and explicit bounded paths; unrestricted graph reachability and wildcard graph queries are intentionally not implemented.
 - No baseline/diff/impact/why graph tooling yet.
 - The YAML DSL stays intentionally small; semantic complexity belongs in analyzers/facts, not in increasingly programmable YAML.
