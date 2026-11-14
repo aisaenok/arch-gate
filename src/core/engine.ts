@@ -14,6 +14,10 @@ import {
   relatedMemberMatches
 } from "./conditions.js";
 import {
+  FACT_DEFINITIONS,
+  isKnownFactKind
+} from "./facts.js";
+import {
   relatedRepositoryIds,
   repositoryRelationDescription
 } from "./relations.js";
@@ -113,41 +117,32 @@ function selectorCoverage(
     }));
 }
 
-function baseRequiredSelectors(
-  rule: RuleDefinition
-): RuleSelector[] {
-  const selectors: RuleSelector[] = [rule.select];
-
-  for (const condition of rule.assert) {
-    if (
-      !condition.memberOf ||
-      condition.memberOf.repositoryRelation
-    ) {
-      continue;
-    }
-
-    selectors.push({
-      fact: condition.memberOf.fact,
-      repositoryRoles:
-        condition.memberOf.repositoryRoles,
-      where: condition.memberOf.where
-    });
-  }
-
-  return selectors;
-}
-
 function baseCoverageGaps(
   model: ArchitectureModel,
   rule: RuleDefinition
 ): CoverageGap[] {
-  const gaps: CoverageGap[] = [];
+  return selectorCoverage(
+    model,
+    rule,
+    rule.select
+  );
+}
 
-  for (const selector of baseRequiredSelectors(rule)) {
-    gaps.push(...selectorCoverage(model, rule, selector));
-  }
+function repositoryCannotProduceFact(
+  model: ArchitectureModel,
+  factKind: string,
+  repositoryId: string
+): boolean {
+  if (!isKnownFactKind(factKind)) return false;
 
-  return gaps;
+  const producer = FACT_DEFINITIONS[factKind].producer;
+  if (producer === "intent") return false;
+
+  const repository = model.repositories[repositoryId];
+  return (
+    repository !== undefined &&
+    repository.type !== producer
+  );
 }
 
 function evidenceIsComplete(
@@ -155,6 +150,15 @@ function evidenceIsComplete(
   factKind: string,
   repositoryId: string
 ): boolean {
+  if (
+    repositoryCannotProduceFact(
+      model,
+      factKind,
+      repositoryId
+    )
+  ) {
+    return true;
+  }
   const evidence = model.evidence.filter(
     (item) =>
       item.factKind === factKind &&
@@ -185,7 +189,7 @@ function evidenceGap(
       fact: factKind,
       repositoryId,
       message:
-        `No analyzer evidence exists for relation-scoped fact "${factKind}" in repository "${repositoryId}".`
+        `No analyzer evidence exists for fact "${factKind}" in repository "${repositoryId}".`
     };
   }
 
@@ -199,7 +203,7 @@ function evidenceGap(
     repositoryId,
     message:
       nonComplete?.message ??
-      `Evidence for relation-scoped fact "${factKind}" is incomplete.`
+      `Evidence for fact "${factKind}" is incomplete.`
   };
 }
 
@@ -209,6 +213,160 @@ function invertStatus(
 ): ConditionStatus {
   if (!not || status === "partial") return status;
   return status === "pass" ? "fail" : "pass";
+}
+
+function genericMemberCondition(
+  model: ArchitectureModel,
+  rule: RuleDefinition,
+  fact: Fact,
+  condition: RuleCondition
+): ConditionEvaluation | undefined {
+  const selector = condition.memberOf;
+
+  if (!selector || selector.repositoryRelation) {
+    return undefined;
+  }
+
+  const value = fact[condition.field];
+  let candidates = selectFacts(model, {
+    fact: selector.fact,
+    repositoryRoles: selector.repositoryRoles,
+    where: selector.where
+  });
+
+  let repositoryIds: Set<string> | undefined;
+
+  if (selector.repositoryMatch) {
+    const currentRepository =
+      fact[selector.repositoryMatch.currentField];
+
+    if (typeof currentRepository !== "string") {
+      return {
+        status: "partial",
+        gaps: [
+          {
+            rule: rule.id,
+            fact: selector.fact,
+            message:
+              `Fact "${fact.kind}" does not contain repository field "${selector.repositoryMatch.currentField}" required by repositoryMatch.`
+          }
+        ]
+      };
+    }
+
+    repositoryIds = new Set([currentRepository]);
+    candidates = candidates.filter(
+      (candidate) =>
+        candidate[
+          selector.repositoryMatch!.sourceField
+        ] === currentRepository
+    );
+  } else {
+    repositoryIds = repositoryIdsForSelector(
+      model,
+      {
+        fact: selector.fact,
+        repositoryRoles: selector.repositoryRoles,
+        where: selector.where
+      }
+    );
+  }
+
+  const matching = candidates.some(
+    (candidate) =>
+      candidate[selector.field] === value
+  );
+
+  if (matching) {
+    return {
+      status: condition.not ? "fail" : "pass"
+    };
+  }
+
+  let unknownRepositories: string[] = [];
+
+  if (repositoryIds) {
+    if (repositoryIds.size === 0) {
+      return {
+        status: "partial",
+        gaps: [
+          {
+            rule: rule.id,
+            fact: selector.fact,
+            message:
+              `No configured repository matches the roles required by fact "${selector.fact}".`
+          }
+        ]
+      };
+    }
+
+    unknownRepositories = [...repositoryIds].filter(
+      (repositoryId) =>
+        !evidenceIsComplete(
+          model,
+          selector.fact,
+          repositoryId
+        )
+    );
+  } else {
+    const evidence = model.evidence.filter(
+      (item) => item.factKind === selector.fact
+    );
+
+    if (
+      evidence.length === 0 ||
+      evidence.some(
+        (item) => item.status !== "complete"
+      )
+    ) {
+      const gaps =
+        evidence.length === 0
+          ? [
+              {
+                rule: rule.id,
+                fact: selector.fact,
+                message:
+                  `No analyzer evidence exists for fact "${selector.fact}".`
+              }
+            ]
+          : evidence
+              .filter(
+                (item) => item.status !== "complete"
+              )
+              .map((item) => ({
+                rule: rule.id,
+                fact: selector.fact,
+                repositoryId: item.repositoryId,
+                message:
+                  item.message ??
+                  `Evidence for fact "${selector.fact}" is ${item.status}.`
+              }));
+
+      return {
+        status: "partial",
+        gaps
+      };
+    }
+  }
+
+  if (unknownRepositories.length > 0) {
+    return {
+      status: "partial",
+      gaps: unknownRepositories.map(
+        (repositoryId) =>
+          evidenceGap(
+            model,
+            rule,
+            selector.fact,
+            repositoryId
+          )
+      )
+    };
+  }
+
+  return {
+    status: condition.not ? "pass" : "fail"
+  };
 }
 
 function relationCondition(
@@ -432,6 +590,48 @@ export function evaluateRules(
               fact: fact.kind,
               field: condition.field,
               ...(relationEvaluation.details ?? {})
+            }
+          });
+          continue;
+        }
+
+        const memberEvaluation =
+          genericMemberCondition(
+            model,
+            rule,
+            fact,
+            condition
+          );
+
+        if (memberEvaluation) {
+          if (memberEvaluation.status === "partial") {
+            addUniqueGaps(
+              gaps,
+              seenGaps,
+              memberEvaluation.gaps ?? []
+            );
+            continue;
+          }
+
+          if (memberEvaluation.status === "pass") {
+            continue;
+          }
+
+          violations.push({
+            rule: rule.id,
+            message:
+              condition.message ?? rule.description,
+            source: factField(
+              fact,
+              rule.sourceField
+            ),
+            target: factField(
+              fact,
+              rule.targetField
+            ),
+            details: {
+              fact: fact.kind,
+              field: condition.field
             }
           });
           continue;

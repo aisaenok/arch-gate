@@ -1,4 +1,4 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import type { SyntaxNode } from "@lezer/common";
 import { parser } from "@lezer/java";
@@ -531,15 +531,34 @@ export async function analyzeJavaRepository(
     };
   }
 
-  const files = [
-    ...new Set(
-      (
-        await Promise.all(
-          repository.sourceDirs.map((dir) => walkJava(dir))
-        )
-      ).flat()
-    )
-  ];
+  const sourceDirFailures: string[] = [];
+  const discoveredFiles: string[] = [];
+
+  for (const directory of repository.sourceDirs) {
+    try {
+      const info = await stat(directory);
+      if (!info.isDirectory()) {
+        sourceDirFailures.push(
+          `${relativeToRoot(
+            directory,
+            repository.root
+          )}: configured Java sourceDir is not a directory`
+        );
+        continue;
+      }
+
+      discoveredFiles.push(...(await walkJava(directory)));
+    } catch {
+      sourceDirFailures.push(
+        `${relativeToRoot(
+          directory,
+          repository.root
+        )}: configured Java sourceDir is unavailable`
+      );
+    }
+  }
+
+  const files = [...new Set(discoveredFiles)];
 
   const parsedFiles: ParsedFile[] = [];
   const parseFailures: string[] = [];
@@ -662,14 +681,19 @@ export async function analyzeJavaRepository(
     );
   }
 
-  const evidence: FactEvidence = parseFailures.length
+  const evidenceFailures = [
+    ...sourceDirFailures,
+    ...parseFailures
+  ];
+
+  const evidence: FactEvidence = evidenceFailures.length
     ? {
         repositoryId: repository.id,
         producer: "java",
         factKind: "backend-endpoint",
         status: "partial",
         message:
-          `${parseFailures.length} Java file(s) failed syntax parsing: ${parseFailures
+          `Java endpoint analysis incomplete: ${evidenceFailures
             .slice(0, 3)
             .join("; ")}`
       }
