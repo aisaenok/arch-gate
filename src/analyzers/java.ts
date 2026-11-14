@@ -31,6 +31,7 @@ interface EndpointDraft {
   methodName: string;
   arity: number;
   offset: number;
+  definitionOffset: number;
   operationId: string;
   method: string;
   path: string;
@@ -55,10 +56,22 @@ export interface JavaImplementationResolution {
   repositoryId: string;
   implementationSourceFile: string;
   implementationLine: number;
+  implementationDefinitionLine: number;
   implementationClassName: string;
   implementationMethodName: string;
   implementationArity: number;
   interfaceSourceFile: string;
+  interfaceDefinitionLine: number;
+  interfaceName: string;
+  interfaceFqn: string;
+  interfaceMethodName: string;
+  interfaceArity: number;
+}
+
+export interface JavaInterfaceEndpointCandidate {
+  repositoryId: string;
+  interfaceSourceFile: string;
+  interfaceDefinitionLine: number;
   interfaceName: string;
   interfaceFqn: string;
   interfaceMethodName: string;
@@ -68,6 +81,9 @@ export interface JavaImplementationResolution {
 export interface JavaAnalysisOptions {
   onImplementationResolution?: (
     resolution: JavaImplementationResolution
+  ) => void;
+  onInterfaceEndpoint?: (
+    endpoint: JavaInterfaceEndpointCandidate
   ) => void;
 }
 
@@ -276,17 +292,14 @@ function hasParseError(root: SyntaxNode): boolean {
   return false;
 }
 
-function methodName(
-  methodNode: SyntaxNode,
-  source: string
-): string {
+function methodDefinitionNode(
+  methodNode: SyntaxNode
+): SyntaxNode | undefined {
   const directDefinition = directChild(
     methodNode,
     "Definition"
   );
-  if (directDefinition) {
-    return sourceText(directDefinition, source);
-  }
+  if (directDefinition) return directDefinition;
 
   const header = directChild(methodNode, "methodHeader");
   const declarator = header
@@ -294,8 +307,16 @@ function methodName(
     : undefined;
 
   return declarator
-    ? definitionName(declarator, source)
-    : "";
+    ? firstDescendant(declarator, "Definition")
+    : undefined;
+}
+
+function methodName(
+  methodNode: SyntaxNode,
+  source: string
+): string {
+  const definition = methodDefinitionNode(methodNode);
+  return definition ? sourceText(definition, source) : "";
 }
 
 function methodArity(
@@ -345,11 +366,14 @@ function endpointFromMethod(
       .find((annotation) => annotation.name === "Operation")
       ?.attributes.get("operationId") ?? "";
 
+  const definition = methodDefinitionNode(methodNode);
+
   return {
     className,
     methodName: methodName(methodNode, source),
     arity: methodArity(methodNode),
     offset: methodNode.from,
+    definitionOffset: definition?.from ?? methodNode.from,
     operationId,
     method,
     path: joinPaths(classPath, methodPath)
@@ -628,6 +652,27 @@ export async function analyzeJavaRepository(
           endpoints: directEndpoints(type.node, file.source)
         };
         interfaces.set(fqn, info);
+
+        const starts = lineStarts(file.source);
+        const sourceFile = relativeToRoot(
+          file.file,
+          repository.root
+        );
+        for (const endpoint of info.endpoints) {
+          options.onInterfaceEndpoint?.({
+            repositoryId: repository.id,
+            interfaceSourceFile: sourceFile,
+            interfaceDefinitionLine: lineAt(
+              starts,
+              endpoint.definitionOffset
+            ),
+            interfaceName: info.name,
+            interfaceFqn: info.fqn,
+            interfaceMethodName: endpoint.methodName,
+            interfaceArity: endpoint.arity
+          });
+        }
+
         const byName = interfacesBySimpleName.get(name) ?? [];
         byName.push(info);
         interfacesBySimpleName.set(name, byName);
@@ -684,12 +729,21 @@ export async function analyzeJavaRepository(
             lineStarts(info.file.source),
             implementationMethod.from
           ),
+          implementationDefinitionLine: lineAt(
+            lineStarts(info.file.source),
+            methodDefinitionNode(implementationMethod)?.from ??
+              implementationMethod.from
+          ),
           implementationClassName: info.name,
           implementationMethodName: endpoint.methodName,
           implementationArity: endpoint.arity,
           interfaceSourceFile: relativeToRoot(
             interfaceInfo.file.file,
             repository.root
+          ),
+          interfaceDefinitionLine: lineAt(
+            lineStarts(interfaceInfo.file.source),
+            endpoint.definitionOffset
           ),
           interfaceName: interfaceInfo.name,
           interfaceFqn: interfaceInfo.fqn,
