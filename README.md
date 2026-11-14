@@ -78,6 +78,7 @@ This enables:
 - import resolution and separate `module-dependency` facts;
 - resolving actual call targets with the TypeChecker;
 - transitive call reachability through local functions, wrappers and generated runtime;
+- resolving local aliases back to `fetch` or configured HTTP modules before emitting `http-call`;
 - checking actual argument type provenance at the generated boundary;
 - distinguishing symbol availability from execution.
 
@@ -104,6 +105,12 @@ does not pretend that every compatible class is definitely invoked. Instead it c
 repository-local compatible implementations; if any of them can reach HTTP,
 `http-reach` evidence becomes `PARTIAL`. Interface dispatch with only local
 implementations that cannot reach HTTP does not degrade evidence.
+
+HTTP transport aliases preserve transport semantics. For example, `const request = fetch`,
+`const client = axios`, `const get = axios.get`, and simple transitive variable alias
+chains are resolved back to the configured transport before method/path extraction.
+This is symbol-based alias resolution; arch-gate does not infer arbitrary custom
+objects as HTTP clients merely because they expose methods named `get` or `post`.
 
 The tool deliberately does not flag arbitrary local types just because their shape resembles an OpenAPI schema. A local DTO becomes relevant when it actually crosses a contract/generated boundary.
 
