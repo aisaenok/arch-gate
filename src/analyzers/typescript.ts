@@ -382,6 +382,7 @@ function resolveTransportExpression(
           declaration.initializer,
           checker,
           repository,
+          scipIndex,
           seen
         );
         if (resolved) return resolved;
