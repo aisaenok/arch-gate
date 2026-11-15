@@ -664,6 +664,7 @@ export function evaluateRules(
           ? "partial"
           : "pass",
     violations,
-    gaps
+    gaps,
+    diagnostics: model.diagnostics ?? []
   };
 }
