@@ -14,7 +14,8 @@ export function report(
           ok: result.status === "pass",
           status: result.status,
           violations: result.violations,
-          gaps: result.gaps
+          gaps: result.gaps,
+          diagnostics: result.diagnostics ?? []
         },
         null,
         2
@@ -25,10 +26,7 @@ export function report(
 
   if (result.status === "pass") {
     console.log("Architecture Gate: PASS");
-    return;
-  }
-
-  if (result.status === "fail") {
+  } else if (result.status === "fail") {
     console.error(
       `Architecture Gate: FAIL (${result.violations.length} violation${result.violations.length === 1 ? "" : "s"})`
     );
@@ -62,6 +60,24 @@ export function report(
       console.error(
         `- ${gap.rule}: ${gap.fact}${repository}: ${gap.message}`
       );
+    }
+  }
+
+  const diagnostics = result.diagnostics ?? [];
+  if (diagnostics.length > 0) {
+    console.error("\nDiagnostics:");
+    for (const diagnostic of diagnostics) {
+      const repository = diagnostic.repositoryId
+        ? ` [${diagnostic.repositoryId}]`
+        : "";
+      console.error(
+        `- ${diagnostic.severity.toUpperCase()} ${diagnostic.code}${repository}: ${diagnostic.message}`
+      );
+      for (const [key, value] of Object.entries(
+        diagnostic.details ?? {}
+      )) {
+        console.error(`  ${key}: ${value}`);
+      }
     }
   }
 }
