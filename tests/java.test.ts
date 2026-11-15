@@ -121,47 +121,39 @@ test("backend endpoint absent from OpenAPI fails", async () => {
 });
 
 
-test("annotated JAX-RS interface alone is not a backend implementation", async () => {
+test("annotated JAX-RS interface without SCIP produces partial evidence", async () => {
   const analysis = await analyzeJavaRepository(
     javaRepository("bh-jaxrs-interface-only")
   );
 
-  assert.equal(analysis.evidence[0]?.status, "complete");
+  assert.equal(analysis.evidence[0]?.status, "partial");
+  assert.match(
+    analysis.evidence[0]?.message ?? "",
+    /SCIP index is required/
+  );
   assert.equal(analysis.facts.length, 0);
 });
 
-test("concrete class inherits JAX-RS endpoint metadata from implemented interface", async () => {
+test("interface implementation is not guessed without SCIP", async () => {
   const analysis = await analyzeJavaRepository(
     javaRepository("bh-jaxrs-inherited")
   );
 
-  assert.equal(analysis.evidence[0]?.status, "complete");
-  assert.equal(analysis.facts.length, 1);
-  assert.equal(
-    analysis.facts[0]?.className,
-    "ApplicationController"
+  assert.equal(analysis.evidence[0]?.status, "partial");
+  assert.match(
+    analysis.evidence[0]?.message ?? "",
+    /SCIP index is required/
   );
-  assert.equal(
-    analysis.facts[0]?.methodName,
-    "getApplication"
-  );
-  assert.equal(
-    analysis.facts[0]?.operationKey,
-    "GET /api/applications/{}"
-  );
-  assert.equal(
-    analysis.facts[0]?.sourceFile,
-    "src/main/java/dev/archgate/ApplicationController.java"
-  );
+  assert.equal(analysis.facts.length, 0);
 });
 
 
-test("inherited JAX-RS metadata is not attached to a different overload", async () => {
+test("interface overload analysis without SCIP remains partial", async () => {
   const analysis = await analyzeJavaRepository(
     javaRepository("bh-jaxrs-inherited-wrong-overload")
   );
 
-  assert.equal(analysis.evidence[0]?.status, "complete");
+  assert.equal(analysis.evidence[0]?.status, "partial");
   assert.equal(analysis.facts.length, 0);
 });
 
