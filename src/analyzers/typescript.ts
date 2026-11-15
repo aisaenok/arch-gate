@@ -462,45 +462,6 @@ function fetchMethod(call: ts.CallExpression): string {
   return "GET";
 }
 
-function resolveModule(
-  specifier: string,
-  sourceFile: string,
-  options: ts.CompilerOptions
-): string | undefined {
-  const resolved = ts.resolveModuleName(
-    specifier,
-    sourceFile,
-    options,
-    ts.sys
-  ).resolvedModule?.resolvedFileName;
-
-  if (resolved) return resolved;
-
-  if (!specifier.startsWith(".")) return undefined;
-
-  const base = path.resolve(
-    path.dirname(sourceFile),
-    specifier
-  );
-  const withoutJs = base.replace(
-    /\.(mjs|cjs|js)$/,
-    ""
-  );
-  const candidates = [
-    base,
-    `${withoutJs}.ts`,
-    `${withoutJs}.tsx`,
-    `${withoutJs}.mts`,
-    `${withoutJs}.cts`,
-    path.join(withoutJs, "index.ts"),
-    path.join(withoutJs, "index.tsx")
-  ];
-
-  return candidates.find((candidate) =>
-    ts.sys.fileExists(candidate)
-  );
-}
-
 function moduleSpecifierScipRange(
   sourceFile: ts.SourceFile,
   moduleSpecifier: ts.StringLiteral
@@ -1181,18 +1142,15 @@ export async function analyzeTypeScriptRepository(
       const specifier =
         statement.moduleSpecifier.text;
 
-      let targetAbsolute: string | undefined;
-      let targetFile: string | undefined;
-      let resolved = false;
-      let internal = false;
-
-      if (analysisOptions.scipIndex) {
-        const scipRange =
-          moduleSpecifierScipRange(
-            sourceFile,
-            statement.moduleSpecifier
-          );
-        const scipResolution = scipRange
+      const scipRange =
+        analysisOptions.scipIndex
+          ? moduleSpecifierScipRange(
+              sourceFile,
+              statement.moduleSpecifier
+            )
+          : undefined;
+      const scipResolution =
+        analysisOptions.scipIndex && scipRange
           ? resolveTypeScriptModuleSpecifierWithScip(
               analysisOptions.scipIndex,
               sourceRelative,
@@ -1200,33 +1158,22 @@ export async function analyzeTypeScriptRepository(
             )
           : undefined;
 
-        targetFile = scipResolution?.targetFile;
-        targetAbsolute = targetFile
-          ? path.resolve(repository.root, targetFile)
-          : undefined;
-        resolved = scipResolution?.resolved ?? false;
-        internal = scipResolution?.internal ?? false;
-      } else {
-        targetAbsolute = resolveModule(
-          specifier,
-          absoluteFile,
-          options
+      const targetFile =
+        scipResolution?.targetFile;
+      const targetAbsolute = targetFile
+        ? path.resolve(
+            repository.root,
+            targetFile
+          )
+        : undefined;
+      const resolved =
+        scipResolution?.resolved ?? false;
+      const internal =
+        !!targetAbsolute &&
+        isInside(
+          targetAbsolute,
+          repository.root
         );
-        internal =
-          !!targetAbsolute &&
-          isInside(
-            targetAbsolute,
-            repository.root
-          );
-        targetFile =
-          targetAbsolute && internal
-            ? relativeToRoot(
-                targetAbsolute,
-                repository.root
-              )
-            : undefined;
-        resolved = !!targetAbsolute;
-      }
 
       if (
         specifier.startsWith(".") &&
@@ -1727,13 +1674,13 @@ export async function analyzeTypeScriptRepository(
   const importResolutionMessage =
     unresolvedInternalImports === 0
       ? undefined
-      : `${unresolvedInternalImports} relative import(s) could not be resolved.`;
+      : `${unresolvedInternalImports} relative import(s) lack SCIP module resolution.`;
 
   const reachabilityIssues: string[] = [];
 
   if (unresolvedInternalImports > 0) {
     reachabilityIssues.push(
-      `${unresolvedInternalImports} relative import(s) could not be resolved`
+      `${unresolvedInternalImports} relative import(s) lack SCIP module resolution`
     );
   }
 

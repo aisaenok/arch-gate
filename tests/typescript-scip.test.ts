@@ -237,7 +237,7 @@ test("configured SCIP is authoritative for TypeScript module resolution", async 
   assert.equal(evidence?.status, "partial");
 });
 
-test("TypeScript compiler module resolution remains the fallback without SCIP", async (t) => {
+test("relative imports without SCIP produce partial module evidence instead of compiler fallback", async (t) => {
   const current = await fixture(t);
 
   const analysis = await analyzeTypeScriptRepository(
@@ -255,10 +255,32 @@ test("TypeScript compiler module resolution remains the fallback without SCIP", 
   assert.ok(usageDependency);
   assert.equal(
     usageDependency.targetFile,
-    "src/barrel.ts"
+    ""
   );
   assert.equal(
     usageDependency.resolved,
-    true
+    false
+  );
+
+  const moduleEvidence = analysis.evidence.find(
+    (item) =>
+      item.factKind === "module-dependency"
+  );
+  assert.equal(
+    moduleEvidence?.status,
+    "partial"
+  );
+  assert.match(
+    moduleEvidence?.message ?? "",
+    /lack SCIP module resolution/
+  );
+
+  const reachEvidence = analysis.evidence.find(
+    (item) =>
+      item.factKind === "http-reach"
+  );
+  assert.equal(
+    reachEvidence?.status,
+    "partial"
   );
 });
