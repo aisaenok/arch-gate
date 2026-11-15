@@ -104,7 +104,6 @@ interface ClassInfo {
 }
 
 interface InterfaceEndpointEntry {
-  info: InterfaceInfo;
   endpoint: EndpointDraft;
   candidate: JavaInterfaceEndpointCandidate;
 }
@@ -598,6 +597,10 @@ export async function analyzeJavaRepository(
     };
   }
 
+  const needsManualResolution =
+    !options.scipIndex ||
+    options.onImplementationResolution !== undefined;
+
   const sourceDirFailures: string[] = [];
   const discoveredFiles: string[] = [];
 
@@ -649,7 +652,9 @@ export async function analyzeJavaRepository(
       source,
       root: tree.topNode,
       packageName: packageName(source),
-      imports: imports(source)
+      imports: needsManualResolution
+        ? imports(source)
+        : new Map<string, string>()
     });
   }
 
@@ -673,7 +678,9 @@ export async function analyzeJavaRepository(
           file,
           endpoints: directEndpoints(type.node, file.source)
         };
-        interfaces.set(fqn, info);
+        if (needsManualResolution) {
+          interfaces.set(fqn, info);
+        }
 
         const starts = lineStarts(file.source);
         const sourceFile = relativeToRoot(
@@ -695,16 +702,18 @@ export async function analyzeJavaRepository(
           };
 
           interfaceEndpointEntries.push({
-            info,
             endpoint,
             candidate
           });
           options.onInterfaceEndpoint?.(candidate);
         }
 
-        const byName = interfacesBySimpleName.get(name) ?? [];
-        byName.push(info);
-        interfacesBySimpleName.set(name, byName);
+        if (needsManualResolution) {
+          const byName =
+            interfacesBySimpleName.get(name) ?? [];
+          byName.push(info);
+          interfacesBySimpleName.set(name, byName);
+        }
         continue;
       }
 
@@ -714,11 +723,15 @@ export async function analyzeJavaRepository(
         file,
         node: type.node,
         methodNodes: collectMethodNodeList(type.node),
-        methods: collectMethodNodes(type.node, file.source),
-        implementedInterfaces: implementedTypeNames(
-          type.node,
-          file.source
-        ),
+        methods: needsManualResolution
+          ? collectMethodNodes(type.node, file.source)
+          : new Map<string, SyntaxNode>(),
+        implementedInterfaces: needsManualResolution
+          ? implementedTypeNames(
+              type.node,
+              file.source
+            )
+          : [],
         directEndpoints: directEndpoints(type.node, file.source)
       });
     }
@@ -730,18 +743,14 @@ export async function analyzeJavaRepository(
     EndpointDraft[]
   >();
 
-  const needsManualResolution =
-    !options.scipIndex ||
-    options.onImplementationResolution !== undefined;
-
   // The legacy resolver is only a compatibility fallback or an
   // explicit shadow-test input. Normal SCIP-authoritative analysis
   // does not execute it.
   if (needsManualResolution) {
     for (const info of classes) {
-    const inheritedEndpoints: EndpointDraft[] = [];
+      const inheritedEndpoints: EndpointDraft[] = [];
 
-    for (const rawInterface of info.implementedInterfaces) {
+      for (const rawInterface of info.implementedInterfaces) {
       const resolved = resolveTypeName(
         rawInterface,
         info.file,
@@ -802,10 +811,10 @@ export async function analyzeJavaRepository(
             implementationMethod.from
         });
       }
-    }
+      }
 
-    manualInheritedByClass.set(info, inheritedEndpoints);
-    }
+      manualInheritedByClass.set(info, inheritedEndpoints);
+      }
   }
 
   const scipInheritedByClass = new Map<
