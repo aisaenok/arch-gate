@@ -506,10 +506,10 @@ function moduleSpecifierScipRange(
   moduleSpecifier: ts.StringLiteral
 ): TypeScriptScipSourceRange | undefined {
   const start = sourceFile.getLineAndCharacterOfPosition(
-    moduleSpecifier.getStart(sourceFile) + 1
+    moduleSpecifier.getStart(sourceFile)
   );
   const end = sourceFile.getLineAndCharacterOfPosition(
-    moduleSpecifier.getEnd() - 1
+    moduleSpecifier.getEnd()
   );
 
   if (start.line !== end.line) {
