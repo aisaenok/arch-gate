@@ -95,6 +95,35 @@ function compilerOptions(
   };
 }
 
+const AXIOS_DEFAULT_SYMBOL =
+  "scip-typescript npm axios 1.7.9 `index.d.ts`/axios.";
+const TYPESCRIPT_FETCH_SYMBOL =
+  "scip-typescript npm typescript 5.9.3 lib/`lib.dom.d.ts`/fetch().";
+
+function occurrenceRange(
+  source: ts.SourceFile,
+  node: ts.Node
+): [number, number, number] | undefined {
+  const start =
+    source.getLineAndCharacterOfPosition(
+      node.getStart(source)
+    );
+  const end =
+    source.getLineAndCharacterOfPosition(
+      node.getEnd()
+    );
+
+  if (start.line !== end.line) {
+    return undefined;
+  }
+
+  return [
+    start.line,
+    start.character,
+    end.character
+  ];
+}
+
 function moduleSymbol(
   relativePath: string
 ): string {
@@ -141,7 +170,67 @@ export async function writeSyntheticTypeScriptScipIndex(
       file,
       root
     );
-    const occurrences = [];
+    const occurrences: Array<{
+      range: number[];
+      symbol: string;
+    }> = [];
+
+    const addOccurrence = (
+      node: ts.Node,
+      symbol: string
+    ): void => {
+      const range = occurrenceRange(
+        source,
+        node
+      );
+      if (range) {
+        occurrences.push({
+          range,
+          symbol
+        });
+      }
+    };
+
+    const visitTransportRoots = (
+      node: ts.Node
+    ): void => {
+      if (
+        ts.isImportDeclaration(node) &&
+        ts.isStringLiteral(
+          node.moduleSpecifier
+        ) &&
+        node.moduleSpecifier.text === "axios" &&
+        node.importClause?.name
+      ) {
+        addOccurrence(
+          node.importClause.name,
+          AXIOS_DEFAULT_SYMBOL
+        );
+      }
+
+      if (
+        ts.isIdentifier(node) &&
+        node.text === "fetch" &&
+        !(
+          ts.isPropertyAccessExpression(
+            node.parent
+          ) &&
+          node.parent.name === node
+        )
+      ) {
+        addOccurrence(
+          node,
+          TYPESCRIPT_FETCH_SYMBOL
+        );
+      }
+
+      ts.forEachChild(
+        node,
+        visitTransportRoots
+      );
+    };
+
+    visitTransportRoots(source);
 
     for (const statement of source.statements) {
       if (
