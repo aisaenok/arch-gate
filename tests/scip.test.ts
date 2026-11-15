@@ -104,3 +104,85 @@ test("SCIP adapter reads index.scip from disk", async (t) => {
     [fetchClient]
   );
 });
+
+
+test("SCIP local symbols are scoped by document", () => {
+  const index = create(IndexSchema, {
+    documents: [
+      {
+        relativePath: "src/a.ts",
+        symbols: [
+          {
+            symbol: "local 0",
+            displayName: "first"
+          }
+        ]
+      },
+      {
+        relativePath: "src/b.ts",
+        symbols: [
+          {
+            symbol: "local 0",
+            displayName: "second"
+          }
+        ]
+      }
+    ]
+  });
+
+  const parsed = parseScipIndex(
+    toBinary(IndexSchema, index)
+  );
+
+  assert.equal(
+    parsed.getSymbolInformation("local 0"),
+    undefined
+  );
+  assert.equal(
+    parsed.getSymbolInformation(
+      "local 0",
+      "src/a.ts"
+    )?.displayName,
+    "first"
+  );
+  assert.equal(
+    parsed.getSymbolInformation(
+      "local 0",
+      "src/b.ts"
+    )?.displayName,
+    "second"
+  );
+  assert.equal(
+    parsed.getDefiningDocument(
+      "local 0",
+      "src/a.ts"
+    )?.relativePath,
+    "src/a.ts"
+  );
+});
+
+test("duplicate local symbols are still rejected inside one document", () => {
+  const index = create(IndexSchema, {
+    documents: [
+      {
+        relativePath: "src/a.ts",
+        symbols: [
+          {
+            symbol: "local 0"
+          },
+          {
+            symbol: "local 0"
+          }
+        ]
+      }
+    ]
+  });
+
+  assert.throws(
+    () =>
+      parseScipIndex(
+        toBinary(IndexSchema, index)
+      ),
+    /duplicate local SCIP SymbolInformation/
+  );
+});
