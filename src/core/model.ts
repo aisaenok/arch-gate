@@ -32,6 +32,7 @@ export interface RawJavaRepository extends RawRepositoryBase {
   type: "java";
   sourceDirs?: string[];
   frameworks?: JavaFramework[];
+  scipIndex?: string;
 }
 
 export type RawRepositoryConfig =
@@ -138,6 +139,7 @@ export interface ResolvedJavaRepository extends ResolvedRepositoryBase {
   type: "java";
   sourceDirs: string[];
   frameworks: JavaFramework[];
+  scipIndexFile?: string;
 }
 
 export type ResolvedRepository =

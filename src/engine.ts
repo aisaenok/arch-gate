@@ -3,6 +3,7 @@ import { analyzeJavaRepository } from "./analyzers/java.js";
 import { analyzeOpenApiRepository } from "./analyzers/openapi.js";
 import { analyzeTypeScriptRepository } from "./analyzers/typescript.js";
 import { evaluateRules } from "./core/engine.js";
+import { loadJavaScipInput } from "./scip/input.js";
 import type {
   AnalysisResult,
   ArchitectureIntent,
@@ -39,7 +40,10 @@ export async function buildArchitectureModel(
     ) {
       analysis = await analyzeTypeScriptRepository(repository);
     } else if (repository.type === "java") {
-      analysis = await analyzeJavaRepository(repository);
+      const scipIndex = await loadJavaScipInput(repository);
+      analysis = await analyzeJavaRepository(repository, {
+        scipIndex
+      });
     }
 
     if (analysis) {

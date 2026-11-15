@@ -237,3 +237,57 @@ rules:
     /unknown repository relation type "implementd-by" in path\[0\]/
   );
 });
+
+
+test("resolves Java SCIP index relative to repository root", async () => {
+  const file = await configFile(`
+repositories:
+  backend:
+    type: java
+    root: services/backend
+    roles: [api-provider]
+    frameworks: [jax-rs]
+    scipIndex: build/index.scip
+
+rules: []
+`);
+
+  const config = await loadConfig(file);
+  const backend = config.repositories.backend;
+
+  assert.equal(backend?.type, "java");
+  if (backend?.type !== "java") {
+    assert.fail("expected Java repository");
+  }
+
+  assert.equal(
+    backend.scipIndexFile,
+    path.resolve(
+      path.dirname(file),
+      "services/backend/build/index.scip"
+    )
+  );
+});
+
+test("Java SCIP index remains optional", async () => {
+  const file = await configFile(`
+repositories:
+  backend:
+    type: java
+    root: .
+    roles: [api-provider]
+    frameworks: [jax-rs]
+
+rules: []
+`);
+
+  const config = await loadConfig(file);
+  const backend = config.repositories.backend;
+
+  assert.equal(backend?.type, "java");
+  if (backend?.type !== "java") {
+    assert.fail("expected Java repository");
+  }
+
+  assert.equal(backend.scipIndexFile, undefined);
+});
