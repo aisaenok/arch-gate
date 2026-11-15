@@ -751,70 +751,73 @@ export async function analyzeJavaRepository(
       const inheritedEndpoints: EndpointDraft[] = [];
 
       for (const rawInterface of info.implementedInterfaces) {
-      const resolved = resolveTypeName(
-        rawInterface,
-        info.file,
-        interfacesBySimpleName
-      );
-      if (!resolved) continue;
-
-      const interfaceInfo = interfaces.get(resolved);
-      if (!interfaceInfo) continue;
-
-      for (const endpoint of interfaceInfo.endpoints) {
-        const implementationMethod = info.methods.get(
-          methodSignature(
-            endpoint.methodName,
-            endpoint.arity
-          )
+        const resolved = resolveTypeName(
+          rawInterface,
+          info.file,
+          interfacesBySimpleName
         );
-        if (!implementationMethod) continue;
+        if (!resolved) continue;
 
-        options.onImplementationResolution?.({
-          repositoryId: repository.id,
-          implementationSourceFile: relativeToRoot(
-            info.file.file,
-            repository.root
-          ),
-          implementationLine: lineAt(
-            lineStarts(info.file.source),
-            implementationMethod.from
-          ),
-          implementationDefinitionLine: lineAt(
-            lineStarts(info.file.source),
-            methodDefinitionNode(implementationMethod)?.from ??
+        const interfaceInfo = interfaces.get(resolved);
+        if (!interfaceInfo) continue;
+
+        for (const endpoint of interfaceInfo.endpoints) {
+          const implementationMethod = info.methods.get(
+            methodSignature(
+              endpoint.methodName,
+              endpoint.arity
+            )
+          );
+          if (!implementationMethod) continue;
+
+          options.onImplementationResolution?.({
+            repositoryId: repository.id,
+            implementationSourceFile: relativeToRoot(
+              info.file.file,
+              repository.root
+            ),
+            implementationLine: lineAt(
+              lineStarts(info.file.source),
               implementationMethod.from
-          ),
-          implementationClassName: info.name,
-          implementationMethodName: endpoint.methodName,
-          implementationArity: endpoint.arity,
-          interfaceSourceFile: relativeToRoot(
-            interfaceInfo.file.file,
-            repository.root
-          ),
-          interfaceDefinitionLine: lineAt(
-            lineStarts(interfaceInfo.file.source),
-            endpoint.definitionOffset
-          ),
-          interfaceName: interfaceInfo.name,
-          interfaceFqn: interfaceInfo.fqn,
-          interfaceMethodName: endpoint.methodName,
-          interfaceArity: endpoint.arity
-        });
+            ),
+            implementationDefinitionLine: lineAt(
+              lineStarts(info.file.source),
+              methodDefinitionNode(implementationMethod)?.from ??
+                implementationMethod.from
+            ),
+            implementationClassName: info.name,
+            implementationMethodName: endpoint.methodName,
+            implementationArity: endpoint.arity,
+            interfaceSourceFile: relativeToRoot(
+              interfaceInfo.file.file,
+              repository.root
+            ),
+            interfaceDefinitionLine: lineAt(
+              lineStarts(interfaceInfo.file.source),
+              endpoint.definitionOffset
+            ),
+            interfaceName: interfaceInfo.name,
+            interfaceFqn: interfaceInfo.fqn,
+            interfaceMethodName: endpoint.methodName,
+            interfaceArity: endpoint.arity
+          });
 
-        inheritedEndpoints.push({
-          ...endpoint,
-          className: info.name,
-          offset: implementationMethod.from,
-          definitionOffset:
-            methodDefinitionNode(implementationMethod)?.from ??
-            implementationMethod.from
-        });
-      }
+          inheritedEndpoints.push({
+            ...endpoint,
+            className: info.name,
+            offset: implementationMethod.from,
+            definitionOffset:
+              methodDefinitionNode(implementationMethod)?.from ??
+              implementationMethod.from
+          });
+        }
       }
 
-      manualInheritedByClass.set(info, inheritedEndpoints);
-      }
+      manualInheritedByClass.set(
+        info,
+        inheritedEndpoints
+      );
+    }
   }
 
   const scipInheritedByClass = new Map<
