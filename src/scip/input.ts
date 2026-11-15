@@ -1,5 +1,6 @@
 import type {
-  ResolvedJavaRepository
+  ResolvedJavaRepository,
+  ResolvedTypeScriptRepository
 } from "../core/model.js";
 import {
   loadScipIndex,
@@ -8,6 +9,17 @@ import {
 
 export async function loadJavaScipInput(
   repository: ResolvedJavaRepository
+): Promise<ScipIndex | undefined> {
+  if (!repository.scipIndexFile) {
+    return undefined;
+  }
+
+  return loadScipIndex(repository.scipIndexFile);
+}
+
+
+export async function loadTypeScriptScipInput(
+  repository: ResolvedTypeScriptRepository
 ): Promise<ScipIndex | undefined> {
   if (!repository.scipIndexFile) {
     return undefined;
