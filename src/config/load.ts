@@ -402,7 +402,10 @@ export async function loadConfig(configFile: string): Promise<ResolvedGateConfig
         sourceDirs: (repository.sourceDirs ?? ["."]).map((dir) =>
           path.resolve(root, dir)
         ),
-        frameworks: requireJavaFrameworks(id, repository.frameworks)
+        frameworks: requireJavaFrameworks(id, repository.frameworks),
+        scipIndexFile: repository.scipIndex
+          ? path.resolve(root, repository.scipIndex)
+          : undefined
       };
       continue;
     }
