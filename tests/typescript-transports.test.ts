@@ -7,6 +7,10 @@ import type {
   Fact,
   ResolvedTypeScriptRepository
 } from "../src/core/model.js";
+import { loadScipIndex } from "../src/scip/index.js";
+import {
+  writeSyntheticTypeScriptScipIndex
+} from "./helpers/typescript-scip.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../../");
@@ -43,10 +47,25 @@ function httpCalls(
   );
 }
 
-test("fetch variable alias produces an http-call fact", async () => {
-  const analysis = await analyzeTypeScriptRepository(
-    repository("pl-transport-fetch-alias")
+async function analyzeFixture(
+  fixture: string
+) {
+  const current = repository(fixture);
+  const indexFile =
+    await writeSyntheticTypeScriptScipIndex(
+      current.root
+    );
+  const scipIndex =
+    await loadScipIndex(indexFile);
+
+  return analyzeTypeScriptRepository(
+    current,
+    { scipIndex }
   );
+}
+
+test("fetch variable alias produces an http-call fact", async () => {
+  const analysis = await analyzeFixture("pl-transport-fetch-alias")
   const calls = httpCalls(analysis.facts);
 
   assert.equal(calls.length, 1);
@@ -63,9 +82,7 @@ test("fetch variable alias produces an http-call fact", async () => {
 });
 
 test("configured HTTP module variable alias preserves method and route", async () => {
-  const analysis = await analyzeTypeScriptRepository(
-    repository("pl-transport-axios-alias")
-  );
+  const analysis = await analyzeFixture("pl-transport-axios-alias")
   const calls = httpCalls(analysis.facts);
 
   assert.equal(calls.length, 1);
@@ -82,9 +99,7 @@ test("configured HTTP module variable alias preserves method and route", async (
 });
 
 test("configured HTTP method alias is recognized", async () => {
-  const analysis = await analyzeTypeScriptRepository(
-    repository("pl-transport-method-alias")
-  );
+  const analysis = await analyzeFixture("pl-transport-method-alias")
   const calls = httpCalls(analysis.facts);
 
   assert.equal(calls.length, 1);
@@ -97,9 +112,7 @@ test("configured HTTP method alias is recognized", async () => {
 });
 
 test("transport alias chains are followed transitively", async () => {
-  const analysis = await analyzeTypeScriptRepository(
-    repository("pl-transport-alias-chain")
-  );
+  const analysis = await analyzeFixture("pl-transport-alias-chain")
   const calls = httpCalls(analysis.facts);
 
   assert.equal(calls.length, 1);
@@ -109,9 +122,7 @@ test("transport alias chains are followed transitively", async () => {
 
 
 test("axios.create instance preserves transport provenance", async () => {
-  const analysis = await analyzeTypeScriptRepository(
-    repository("pl-axios-create-instance")
-  );
+  const analysis = await analyzeFixture("pl-axios-create-instance")
   const calls = httpCalls(analysis.facts);
 
   assert.equal(calls.length, 1);
@@ -125,9 +136,7 @@ test("axios.create instance preserves transport provenance", async () => {
 });
 
 test("method alias from axios.create instance remains an HTTP call", async () => {
-  const analysis = await analyzeTypeScriptRepository(
-    repository("pl-axios-create-method-alias")
-  );
+  const analysis = await analyzeFixture("pl-axios-create-method-alias")
   const calls = httpCalls(analysis.facts);
 
   assert.equal(calls.length, 1);
@@ -140,9 +149,7 @@ test("method alias from axios.create instance remains an HTTP call", async () =>
 });
 
 test("aliased axios create factory preserves instance provenance", async () => {
-  const analysis = await analyzeTypeScriptRepository(
-    repository("pl-axios-create-factory-alias")
-  );
+  const analysis = await analyzeFixture("pl-axios-create-factory-alias")
   const calls = httpCalls(analysis.facts);
 
   assert.equal(calls.length, 1);
@@ -152,9 +159,7 @@ test("aliased axios create factory preserves instance provenance", async () => {
 
 
 test("axios.create itself is not emitted as an HTTP call", async () => {
-  const analysis = await analyzeTypeScriptRepository(
-    repository("pl-axios-create-only")
-  );
+  const analysis = await analyzeFixture("pl-axios-create-only")
 
   assert.equal(httpCalls(analysis.facts).length, 0);
 });
