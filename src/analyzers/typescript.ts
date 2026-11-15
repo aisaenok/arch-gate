@@ -5,6 +5,9 @@ import { operationKey } from "../core/routes.js";
 import type { ScipIndex } from "../scip/index.js";
 import {
   resolveTypeScriptModuleSpecifierWithScip,
+  resolveTypeScriptSymbolAtRange,
+  typeScriptExternalMemberName,
+  typeScriptExternalPackageName,
   type TypeScriptScipSourceRange
 } from "../scip/typescript-resolution.js";
 import type {
@@ -158,80 +161,140 @@ function location(sourceFile: ts.SourceFile, node: ts.Node): string {
   return `${line + 1}:${character + 1}`;
 }
 
-function transportBindings(
+function scipRange(
   sourceFile: ts.SourceFile,
+  node: ts.Node
+): TypeScriptScipSourceRange | undefined {
+  const start =
+    sourceFile.getLineAndCharacterOfPosition(
+      node.getStart(sourceFile)
+    );
+  const end =
+    sourceFile.getLineAndCharacterOfPosition(
+      node.getEnd()
+    );
+
+  if (start.line !== end.line) {
+    return undefined;
+  }
+
+  return {
+    line: start.line,
+    startCharacter: start.character,
+    endCharacter: end.character
+  };
+}
+
+function npmPackageName(
+  moduleSpecifier: string
+): string {
+  if (moduleSpecifier.startsWith("@")) {
+    return moduleSpecifier
+      .split("/")
+      .slice(0, 2)
+      .join("/");
+  }
+
+  return moduleSpecifier.split("/")[0]!;
+}
+
+function configuredTransportModule(
+  symbol: string,
   modules: string[]
-): Map<string, TransportBinding> {
-  const bindings = new Map<string, TransportBinding>();
+): string | undefined {
+  const packageName =
+    typeScriptExternalPackageName(symbol);
 
-  for (const statement of sourceFile.statements) {
-    if (
-      !ts.isImportDeclaration(statement) ||
-      !ts.isStringLiteral(statement.moduleSpecifier)
-    ) {
-      continue;
-    }
-
-    const moduleName = statement.moduleSpecifier.text;
-    if (!modules.includes(moduleName)) continue;
-
-    const clause = statement.importClause;
-    if (!clause) continue;
-
-    if (clause.name) {
-      bindings.set(clause.name.text, {
-        module: moduleName,
-        importedName: "default"
-      });
-    }
-
-    const named = clause.namedBindings;
-    if (named && ts.isNamespaceImport(named)) {
-      bindings.set(named.name.text, {
-        module: moduleName,
-        importedName: "*"
-      });
-    }
-
-    if (named && ts.isNamedImports(named)) {
-      for (const item of named.elements) {
-        bindings.set(item.name.text, {
-          module: moduleName,
-          importedName:
-            item.propertyName?.text ?? item.name.text
-        });
-      }
-    }
+  if (!packageName) {
+    return undefined;
   }
 
-  return bindings;
-}
-
-function rootIdentifier(expression: ts.Expression): ts.Identifier | undefined {
-  if (ts.isIdentifier(expression)) return expression;
-  if (ts.isPropertyAccessExpression(expression)) {
-    return rootIdentifier(expression.expression);
-  }
-  if (ts.isElementAccessExpression(expression)) {
-    return rootIdentifier(expression.expression);
-  }
-  return undefined;
-}
-
-function isRepositoryLocalIdentifier(
-  identifier: ts.Identifier,
-  checker: ts.TypeChecker,
-  repository: ResolvedTypeScriptRepository
-): boolean {
-  const symbol = checker.getSymbolAtLocation(identifier);
-  return (
-    symbol?.declarations?.some((declaration) =>
-      isInside(
-        declaration.getSourceFile().fileName,
-        repository.root
-      )
-    ) ?? false
+  return modules.find(
+    (moduleName) =>
+      npmPackageName(moduleName) === packageName
   );
+}
+
+function scipSymbolForNode(
+  node: ts.Node,
+  repository: ResolvedTypeScriptRepository,
+  scipIndex: ScipIndex | undefined
+): string | undefined {
+  if (!scipIndex) {
+    return undefined;
+  }
+
+  const sourceFile = node.getSourceFile();
+  const range = scipRange(sourceFile, node);
+
+  if (!range) {
+    return undefined;
+  }
+
+  return resolveTypeScriptSymbolAtRange(
+    scipIndex,
+    relativeToRoot(
+      sourceFile.fileName,
+      repository.root
+    ),
+    range
+  );
+}
+
+function transportBindingFromScip(
+  node: ts.Node,
+  repository: ResolvedTypeScriptRepository,
+  scipIndex: ScipIndex | undefined,
+  importedNameOverride?: string
+): TransportBinding | undefined {
+  const symbol = scipSymbolForNode(
+    node,
+    repository,
+    scipIndex
+  );
+
+  if (!symbol) {
+    return undefined;
+  }
+
+  const packageName =
+    typeScriptExternalPackageName(symbol);
+  const memberName =
+    typeScriptExternalMemberName(symbol);
+
+  if (
+    packageName === "typescript" &&
+    memberName === "fetch"
+  ) {
+    return {
+      module: "fetch",
+      importedName: "default"
+    };
+  }
+
+  const moduleName = configuredTransportModule(
+    symbol,
+    repository.httpModules
+  );
+
+  if (!moduleName) {
+    return undefined;
+  }
+
+  const semanticName =
+    importedNameOverride ??
+    (memberName &&
+    (HTTP_METHODS.has(
+      memberName.toLowerCase()
+    ) ||
+      memberName === "create")
+      ? memberName
+      : "default");
+
+  return {
+    module: moduleName,
+    importedName: semanticName
+  };
 }
 
 function isTransportFactory(
@@ -247,6 +310,7 @@ function resolveTransportExpression(
   expression: ts.Expression,
   checker: ts.TypeChecker,
   repository: ResolvedTypeScriptRepository,
+  scipIndex: ScipIndex | undefined,
   seen = new Set<ts.Symbol>()
 ): TransportBinding | undefined {
   if (
@@ -259,6 +323,7 @@ function resolveTransportExpression(
       expression.expression,
       checker,
       repository,
+      scipIndex,
       seen
     );
   }
@@ -268,6 +333,7 @@ function resolveTransportExpression(
       expression.expression,
       checker,
       repository,
+      scipIndex,
       seen
     );
 
@@ -282,26 +348,15 @@ function resolveTransportExpression(
   }
 
   if (ts.isIdentifier(expression)) {
-    if (
-      expression.text === "fetch" &&
-      !isRepositoryLocalIdentifier(
-        expression,
-        checker,
-        repository
-      )
-    ) {
-      return {
-        module: "fetch",
-        importedName: "default"
-      };
+    const direct = transportBindingFromScip(
+      expression,
+      repository,
+      scipIndex
+    );
+
+    if (direct) {
+      return direct;
     }
-
-    const direct = transportBindings(
-      expression.getSourceFile(),
-      repository.httpModules
-    ).get(expression.text);
-
-    if (direct) return direct;
 
     let symbol = checker.getSymbolAtLocation(expression);
 
@@ -327,6 +382,7 @@ function resolveTransportExpression(
           declaration.initializer,
           checker,
           repository,
+          scipIndex,
           seen
         );
         if (resolved) return resolved;
@@ -337,10 +393,22 @@ function resolveTransportExpression(
   }
 
   if (ts.isPropertyAccessExpression(expression)) {
+    const direct = transportBindingFromScip(
+      expression.name,
+      repository,
+      scipIndex,
+      expression.name.text
+    );
+
+    if (direct) {
+      return direct;
+    }
+
     const base = resolveTransportExpression(
       expression.expression,
       checker,
       repository,
+      scipIndex,
       seen
     );
 
@@ -361,6 +429,7 @@ function resolveTransportExpression(
       expression.expression,
       checker,
       repository,
+      scipIndex,
       seen
     );
 
@@ -1264,7 +1333,8 @@ export async function analyzeTypeScriptRepository(
           resolveTransportExpression(
             node.expression,
             checker,
-            repository
+            repository,
+            analysisOptions.scipIndex
           );
 
         if (
@@ -1676,7 +1746,22 @@ export async function analyzeTypeScriptRepository(
       ? undefined
       : `${unresolvedInternalImports} relative import(s) lack SCIP module resolution.`;
 
+  const transportEvidenceStatus =
+    analysisOptions.scipIndex
+      ? "complete"
+      : "partial";
+  const transportEvidenceMessage =
+    analysisOptions.scipIndex
+      ? undefined
+      : "SCIP index is required for TypeScript transport symbol identity.";
+
   const reachabilityIssues: string[] = [];
+
+  if (!analysisOptions.scipIndex) {
+    reachabilityIssues.push(
+      "SCIP index is unavailable for transport symbol identity"
+    );
+  }
 
   if (unresolvedInternalImports > 0) {
     reachabilityIssues.push(
@@ -1710,7 +1795,8 @@ export async function analyzeTypeScriptRepository(
       repositoryId: repository.id,
       producer: "typescript",
       factKind: "http-call",
-      status: "complete"
+      status: transportEvidenceStatus,
+      message: transportEvidenceMessage
     },
     {
       repositoryId: repository.id,

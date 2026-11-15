@@ -284,3 +284,123 @@ test("relative imports without SCIP produce partial module evidence instead of c
     "partial"
   );
 });
+
+
+test("SCIP transport identity survives a local re-export", async (t) => {
+  const root = await mkdtemp(
+    path.join(
+      os.tmpdir(),
+      "arch-gate-ts-scip-transport-"
+    )
+  );
+
+  t.after(async () => {
+    await rm(root, {
+      recursive: true,
+      force: true
+    });
+  });
+
+  const sourceDir = path.join(root, "src");
+  await mkdir(sourceDir, { recursive: true });
+
+  const usageSource = [
+    'import { http } from "./barrel.js";',
+    "",
+    'export const load = () => http.get("/api/admin");',
+    ""
+  ].join("\n");
+
+  await Promise.all([
+    writeFile(
+      path.join(sourceDir, "barrel.ts"),
+      'export { default as http } from "axios";\n',
+      "utf8"
+    ),
+    writeFile(
+      path.join(sourceDir, "usage.ts"),
+      usageSource,
+      "utf8"
+    )
+  ]);
+
+  const axiosDefault =
+    "scip-typescript npm axios 1.7.9 `index.d.ts`/axios.";
+  const barrelModule =
+    "scip-typescript npm fixture 1.0.0 src/`barrel.ts`/";
+
+  const usageLines = usageSource.split("\n");
+  const importSpecifier =
+    '"./barrel.js"';
+  const moduleStart =
+    usageLines[0]!.indexOf(importSpecifier);
+  const httpStart =
+    usageLines[2]!.indexOf("http");
+
+  const index = create(IndexSchema, {
+    documents: [
+      {
+        relativePath: "src/usage.ts",
+        occurrences: [
+          {
+            range: [
+              0,
+              moduleStart,
+              moduleStart +
+                importSpecifier.length
+            ],
+            symbol: barrelModule
+          },
+          {
+            range: [
+              2,
+              httpStart,
+              httpStart + 4
+            ],
+            symbol: axiosDefault
+          }
+        ]
+      },
+      {
+        relativePath: "src/barrel.ts",
+        symbols: [
+          {
+            symbol: barrelModule,
+            displayName: "barrel"
+          }
+        ]
+      }
+    ]
+  });
+
+  const analysis = await analyzeTypeScriptRepository(
+    {
+      id: "frontend",
+      type: "typescript",
+      root,
+      roles: ["api-consumer"],
+      sourceDir,
+      generatedRuntimeDirs: [],
+      allowDirectHttpDirs: [],
+      allowManualContractTypeDirs: [],
+      httpModules: ["axios"]
+    },
+    {
+      scipIndex: parseScipIndex(
+        toBinary(IndexSchema, index)
+      )
+    }
+  );
+
+  const calls = analysis.facts.filter(
+    (fact) => fact.kind === "http-call"
+  );
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.transport, "axios");
+  assert.equal(calls[0]?.method, "GET");
+  assert.equal(
+    calls[0]?.operationKey,
+    "GET /api/admin"
+  );
+});

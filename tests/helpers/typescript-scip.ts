@@ -95,6 +95,35 @@ function compilerOptions(
   };
 }
 
+const AXIOS_DEFAULT_SYMBOL =
+  "scip-typescript npm axios 1.7.9 `index.d.ts`/axios.";
+const TYPESCRIPT_FETCH_SYMBOL =
+  "scip-typescript npm typescript 5.9.3 lib/`lib.dom.d.ts`/fetch().";
+
+function occurrenceRange(
+  source: ts.SourceFile,
+  node: ts.Node
+): [number, number, number] | undefined {
+  const start =
+    source.getLineAndCharacterOfPosition(
+      node.getStart(source)
+    );
+  const end =
+    source.getLineAndCharacterOfPosition(
+      node.getEnd()
+    );
+
+  if (start.line !== end.line) {
+    return undefined;
+  }
+
+  return [
+    start.line,
+    start.character,
+    end.character
+  ];
+}
+
 function moduleSymbol(
   relativePath: string
 ): string {
@@ -115,6 +144,15 @@ export async function writeSyntheticTypeScriptScipIndex(
   );
   const options = compilerOptions(root);
 
+  const program = ts.createProgram({
+    rootNames: files,
+    options: {
+      ...options,
+      noEmit: true
+    }
+  });
+  const checker = program.getTypeChecker();
+
   const symbolByFile = new Map(
     files.map((file) => {
       const relative = relativeToRoot(
@@ -131,17 +169,101 @@ export async function writeSyntheticTypeScriptScipIndex(
   const documents = [];
 
   for (const file of files) {
-    const source = ts.createSourceFile(
-      file,
-      ts.sys.readFile(file) ?? "",
-      ts.ScriptTarget.Latest,
-      true
-    );
+    const source =
+      program.getSourceFile(file) ??
+      ts.createSourceFile(
+        file,
+        ts.sys.readFile(file) ?? "",
+        ts.ScriptTarget.Latest,
+        true
+      );
     const relative = relativeToRoot(
       file,
       root
     );
-    const occurrences = [];
+    const occurrences: Array<{
+      range: number[];
+      symbol: string;
+    }> = [];
+
+    const addOccurrence = (
+      node: ts.Node,
+      symbol: string
+    ): void => {
+      const range = occurrenceRange(
+        source,
+        node
+      );
+      if (range) {
+        occurrences.push({
+          range,
+          symbol
+        });
+      }
+    };
+
+    const axiosAliases = new Set<ts.Symbol>();
+
+    for (const statement of source.statements) {
+      if (
+        ts.isImportDeclaration(statement) &&
+        ts.isStringLiteral(
+          statement.moduleSpecifier
+        ) &&
+        statement.moduleSpecifier.text ===
+          "axios" &&
+        statement.importClause?.name
+      ) {
+        const symbol =
+          checker.getSymbolAtLocation(
+            statement.importClause.name
+          );
+        if (symbol) {
+          axiosAliases.add(symbol);
+        }
+      }
+    }
+
+    const visitTransportRoots = (
+      node: ts.Node
+    ): void => {
+      if (ts.isIdentifier(node)) {
+        const symbol =
+          checker.getSymbolAtLocation(node);
+
+        if (
+          symbol &&
+          axiosAliases.has(symbol)
+        ) {
+          addOccurrence(
+            node,
+            AXIOS_DEFAULT_SYMBOL
+          );
+        }
+
+        if (
+          node.text === "fetch" &&
+          !(
+            ts.isPropertyAccessExpression(
+              node.parent
+            ) &&
+            node.parent.name === node
+          )
+        ) {
+          addOccurrence(
+            node,
+            TYPESCRIPT_FETCH_SYMBOL
+          );
+        }
+      }
+
+      ts.forEachChild(
+        node,
+        visitTransportRoots
+      );
+    };
+
+    visitTransportRoots(source);
 
     for (const statement of source.statements) {
       if (
