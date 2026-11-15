@@ -13,7 +13,6 @@ export interface TypeScriptScipModuleResolution {
   symbol: string;
   targetFile?: string;
   resolved: boolean;
-  internal: boolean;
 }
 
 function occurrenceRange(
@@ -83,7 +82,6 @@ export function resolveTypeScriptModuleSpecifierWithScip(
   return {
     symbol: occurrence.symbol,
     targetFile: definingDocument?.relativePath,
-    resolved: true,
-    internal: definingDocument !== undefined
+    resolved: true
   };
 }
