@@ -3,6 +3,7 @@ import path from "node:path";
 import type { SyntaxNode } from "@lezer/common";
 import { parser } from "@lezer/java";
 import { operationKey } from "../core/routes.js";
+import type { ScipIndex } from "../scip/index.js";
 import type {
   AnalysisResult,
   Fact,
@@ -79,6 +80,7 @@ export interface JavaInterfaceEndpointCandidate {
 }
 
 export interface JavaAnalysisOptions {
+  scipIndex?: ScipIndex;
   onImplementationResolution?: (
     resolution: JavaImplementationResolution
   ) => void;
