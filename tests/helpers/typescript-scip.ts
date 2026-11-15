@@ -144,6 +144,15 @@ export async function writeSyntheticTypeScriptScipIndex(
   );
   const options = compilerOptions(root);
 
+  const program = ts.createProgram({
+    rootNames: files,
+    options: {
+      ...options,
+      noEmit: true
+    }
+  });
+  const checker = program.getTypeChecker();
+
   const symbolByFile = new Map(
     files.map((file) => {
       const relative = relativeToRoot(
@@ -160,12 +169,14 @@ export async function writeSyntheticTypeScriptScipIndex(
   const documents = [];
 
   for (const file of files) {
-    const source = ts.createSourceFile(
-      file,
-      ts.sys.readFile(file) ?? "",
-      ts.ScriptTarget.Latest,
-      true
-    );
+    const source =
+      program.getSourceFile(file) ??
+      ts.createSourceFile(
+        file,
+        ts.sys.readFile(file) ?? "",
+        ts.ScriptTarget.Latest,
+        true
+      );
     const relative = relativeToRoot(
       file,
       root
@@ -191,37 +202,59 @@ export async function writeSyntheticTypeScriptScipIndex(
       }
     };
 
+    const axiosAliases = new Set<ts.Symbol>();
+
+    for (const statement of source.statements) {
+      if (
+        ts.isImportDeclaration(statement) &&
+        ts.isStringLiteral(
+          statement.moduleSpecifier
+        ) &&
+        statement.moduleSpecifier.text ===
+          "axios" &&
+        statement.importClause?.name
+      ) {
+        const symbol =
+          checker.getSymbolAtLocation(
+            statement.importClause.name
+          );
+        if (symbol) {
+          axiosAliases.add(symbol);
+        }
+      }
+    }
+
     const visitTransportRoots = (
       node: ts.Node
     ): void => {
-      if (
-        ts.isImportDeclaration(node) &&
-        ts.isStringLiteral(
-          node.moduleSpecifier
-        ) &&
-        node.moduleSpecifier.text === "axios" &&
-        node.importClause?.name
-      ) {
-        addOccurrence(
-          node.importClause.name,
-          AXIOS_DEFAULT_SYMBOL
-        );
-      }
+      if (ts.isIdentifier(node)) {
+        const symbol =
+          checker.getSymbolAtLocation(node);
 
-      if (
-        ts.isIdentifier(node) &&
-        node.text === "fetch" &&
-        !(
-          ts.isPropertyAccessExpression(
-            node.parent
-          ) &&
-          node.parent.name === node
-        )
-      ) {
-        addOccurrence(
-          node,
-          TYPESCRIPT_FETCH_SYMBOL
-        );
+        if (
+          symbol &&
+          axiosAliases.has(symbol)
+        ) {
+          addOccurrence(
+            node,
+            AXIOS_DEFAULT_SYMBOL
+          );
+        }
+
+        if (
+          node.text === "fetch" &&
+          !(
+            ts.isPropertyAccessExpression(
+              node.parent
+            ) &&
+            node.parent.name === node
+          )
+        ) {
+          addOccurrence(
+            node,
+            TYPESCRIPT_FETCH_SYMBOL
+          );
+        }
       }
 
       ts.forEachChild(
