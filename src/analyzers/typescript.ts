@@ -2,6 +2,11 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
 import { operationKey } from "../core/routes.js";
+import type { ScipIndex } from "../scip/index.js";
+import {
+  resolveTypeScriptModuleSpecifierWithScip,
+  type TypeScriptScipSourceRange
+} from "../scip/typescript-resolution.js";
 import type {
   AnalysisResult,
   Fact,
@@ -69,6 +74,10 @@ interface ExecutableScope {
 
 interface DynamicDispatchRecord {
   candidateScopes: Set<string>;
+}
+
+export interface TypeScriptAnalysisOptions {
+  scipIndex?: ScipIndex;
 }
 
 function isInside(file: string, directory: string): boolean {
@@ -490,6 +499,28 @@ function resolveModule(
   return candidates.find((candidate) =>
     ts.sys.fileExists(candidate)
   );
+}
+
+function moduleSpecifierScipRange(
+  sourceFile: ts.SourceFile,
+  moduleSpecifier: ts.StringLiteral
+): TypeScriptScipSourceRange | undefined {
+  const start = sourceFile.getLineAndCharacterOfPosition(
+    moduleSpecifier.getStart(sourceFile)
+  );
+  const end = sourceFile.getLineAndCharacterOfPosition(
+    moduleSpecifier.getEnd()
+  );
+
+  if (start.line !== end.line) {
+    return undefined;
+  }
+
+  return {
+    line: start.line,
+    startCharacter: start.character,
+    endCharacter: end.character
+  };
 }
 
 function declarationKind(
@@ -1017,7 +1048,8 @@ function compactFilePath(
 }
 
 export async function analyzeTypeScriptRepository(
-  repository: ResolvedTypeScriptRepository
+  repository: ResolvedTypeScriptRepository,
+  analysisOptions: TypeScriptAnalysisOptions = {}
 ): Promise<AnalysisResult> {
   const files = await walk(repository.sourceDir);
   const fileSet = new Set(
@@ -1148,28 +1180,57 @@ export async function analyzeTypeScriptRepository(
 
       const specifier =
         statement.moduleSpecifier.text;
-      const targetAbsolute = resolveModule(
-        specifier,
-        absoluteFile,
-        options
-      );
-      const internal =
-        !!targetAbsolute &&
-        isInside(
-          targetAbsolute,
-          repository.root
-        );
-      const targetFile =
-        targetAbsolute && internal
-          ? relativeToRoot(
-              targetAbsolute,
-              repository.root
+
+      let targetAbsolute: string | undefined;
+      let targetFile: string | undefined;
+      let resolved = false;
+      let internal = false;
+
+      if (analysisOptions.scipIndex) {
+        const scipRange =
+          moduleSpecifierScipRange(
+            sourceFile,
+            statement.moduleSpecifier
+          );
+        const scipResolution = scipRange
+          ? resolveTypeScriptModuleSpecifierWithScip(
+              analysisOptions.scipIndex,
+              sourceRelative,
+              scipRange
             )
           : undefined;
 
+        targetFile = scipResolution?.targetFile;
+        targetAbsolute = targetFile
+          ? path.resolve(repository.root, targetFile)
+          : undefined;
+        resolved = scipResolution?.resolved ?? false;
+        internal = scipResolution?.internal ?? false;
+      } else {
+        targetAbsolute = resolveModule(
+          specifier,
+          absoluteFile,
+          options
+        );
+        internal =
+          !!targetAbsolute &&
+          isInside(
+            targetAbsolute,
+            repository.root
+          );
+        targetFile =
+          targetAbsolute && internal
+            ? relativeToRoot(
+                targetAbsolute,
+                repository.root
+              )
+            : undefined;
+        resolved = !!targetAbsolute;
+      }
+
       if (
         specifier.startsWith(".") &&
-        !targetAbsolute
+        !resolved
       ) {
         unresolvedInternalImports += 1;
       }
@@ -1185,7 +1246,7 @@ export async function analyzeTypeScriptRepository(
         sourceFile: sourceRelative,
         specifier,
         targetFile: targetFile ?? "",
-        resolved: !!targetAbsolute,
+        resolved,
         internal
       });
 

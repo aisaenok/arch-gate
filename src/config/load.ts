@@ -373,7 +373,10 @@ export async function loadConfig(configFile: string): Promise<ResolvedGateConfig
         allowManualContractTypeDirs: (
           repository.allowManualContractTypeDirs ?? []
         ).map((dir) => path.resolve(root, dir)),
-        httpModules: repository.httpModules ?? ["axios"]
+        httpModules: repository.httpModules ?? ["axios"],
+        scipIndexFile: repository.scipIndex
+          ? path.resolve(root, repository.scipIndex)
+          : undefined
       };
       continue;
     }

@@ -21,6 +21,7 @@ export interface RawTypeScriptRepository extends RawRepositoryBase {
   allowDirectHttpDirs?: string[];
   allowManualContractTypeDirs?: string[];
   httpModules?: string[];
+  scipIndex?: string;
 }
 
 export interface RawOpenApiRepository extends RawRepositoryBase {
@@ -128,6 +129,7 @@ export interface ResolvedTypeScriptRepository extends ResolvedRepositoryBase {
   allowDirectHttpDirs: string[];
   allowManualContractTypeDirs: string[];
   httpModules: string[];
+  scipIndexFile?: string;
 }
 
 export interface ResolvedOpenApiRepository extends ResolvedRepositoryBase {

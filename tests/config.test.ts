@@ -291,3 +291,33 @@ rules: []
 
   assert.equal(backend.scipIndexFile, undefined);
 });
+
+
+test("resolves TypeScript SCIP index relative to repository root", async () => {
+  const file = await configFile(`
+repositories:
+  frontend:
+    type: typescript
+    root: apps/frontend
+    roles: [api-consumer]
+    scipIndex: build/index.scip
+
+rules: []
+`);
+
+  const config = await loadConfig(file);
+  const frontend = config.repositories.frontend;
+
+  assert.equal(frontend?.type, "typescript");
+  if (frontend?.type !== "typescript") {
+    assert.fail("expected TypeScript repository");
+  }
+
+  assert.equal(
+    frontend.scipIndexFile,
+    path.resolve(
+      path.dirname(file),
+      "apps/frontend/build/index.scip"
+    )
+  );
+});
