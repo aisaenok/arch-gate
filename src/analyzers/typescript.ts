@@ -1169,7 +1169,11 @@ export async function analyzeTypeScriptRepository(
       const resolved =
         scipResolution?.resolved ?? false;
       const internal =
-        scipResolution?.internal ?? false;
+        !!targetAbsolute &&
+        isInside(
+          targetAbsolute,
+          repository.root
+        );
 
       if (
         specifier.startsWith(".") &&
