@@ -1,19 +1,9 @@
 import { analyzeIntent } from "./analyzers/intent.js";
-import {
-  analyzeJavaRepository,
-  type JavaImplementationResolution,
-  type JavaInterfaceEndpointCandidate
-} from "./analyzers/java.js";
+import { analyzeJavaRepository } from "./analyzers/java.js";
 import { analyzeOpenApiRepository } from "./analyzers/openapi.js";
 import { analyzeTypeScriptRepository } from "./analyzers/typescript.js";
 import { evaluateRules } from "./core/engine.js";
 import { loadJavaScipInput } from "./scip/input.js";
-import {
-  compareJavaImplementationParityWithScip
-} from "./scip/java-shadow.js";
-import {
-  javaScipParityDiagnostics
-} from "./scip/java-diagnostics.js";
 import type {
   AnalysisDiagnostic,
   AnalysisResult,
@@ -55,40 +45,9 @@ export async function buildArchitectureModel(
       analysis = await analyzeTypeScriptRepository(repository);
     } else if (repository.type === "java") {
       const scipIndex = await loadJavaScipInput(repository);
-      const implementationResolutions:
-        JavaImplementationResolution[] = [];
-      const interfaceEndpoints:
-        JavaInterfaceEndpointCandidate[] = [];
-
       analysis = await analyzeJavaRepository(repository, {
-        scipIndex,
-        onImplementationResolution: scipIndex
-          ? (resolution) => {
-              implementationResolutions.push(resolution);
-            }
-          : undefined,
-        onInterfaceEndpoint: scipIndex
-          ? (endpoint) => {
-              interfaceEndpoints.push(endpoint);
-            }
-          : undefined
+        scipIndex
       });
-
-      if (scipIndex) {
-        const parity =
-          compareJavaImplementationParityWithScip(
-            implementationResolutions,
-            interfaceEndpoints,
-            scipIndex
-          );
-
-        diagnostics.push(
-          ...javaScipParityDiagnostics(
-            repository.id,
-            parity
-          )
-        );
-      }
     }
 
     if (analysis) {
