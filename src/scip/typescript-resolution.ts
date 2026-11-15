@@ -52,35 +52,74 @@ function sameRange(
   );
 }
 
+
+export function resolveTypeScriptSymbolAtRange(
+  index: ScipIndex,
+  sourceFile: string,
+  range: TypeScriptScipSourceRange
+): string | undefined {
+  return index
+    .getOccurrences(sourceFile)
+    .find((occurrence) => {
+      const current = occurrenceRange(occurrence);
+      return (
+        !!occurrence.symbol &&
+        !!current &&
+        sameRange(current, range)
+      );
+    })
+    ?.symbol;
+}
+
+export function typeScriptExternalPackageName(
+  symbol: string
+): string | undefined {
+  const match =
+    /^scip-typescript npm ([^ ]+) ([^ ]+) /.exec(
+      symbol
+    );
+  return match?.[1];
+}
+
+export function typeScriptExternalMemberName(
+  symbol: string
+): string | undefined {
+  const descriptor =
+    symbol.slice(symbol.lastIndexOf("/") + 1);
+  const member =
+    descriptor.includes("#")
+      ? descriptor.slice(
+          descriptor.lastIndexOf("#") + 1
+        )
+      : descriptor;
+
+  const match =
+    /^([^().]+)(?:\(\))?\.$/.exec(member);
+
+  return match?.[1];
+}
+
 export function resolveTypeScriptModuleSpecifierWithScip(
   index: ScipIndex,
   sourceFile: string,
   range: TypeScriptScipSourceRange
 ): TypeScriptScipModuleResolution | undefined {
-  const occurrences = index
-    .getOccurrences(sourceFile)
-    .filter((occurrence) => {
-      const current = occurrenceRange(occurrence);
-      return current
-        ? sameRange(current, range)
-        : false;
-    })
-    .filter((occurrence) => !!occurrence.symbol);
+  const symbol =
+    resolveTypeScriptSymbolAtRange(
+      index,
+      sourceFile,
+      range
+    );
 
-  if (occurrences.length === 0) {
+  if (!symbol) {
     return undefined;
   }
 
-  const occurrence =
-    occurrences.find((candidate) =>
-      index.getDefiningDocument(candidate.symbol)
-    ) ?? occurrences[0]!;
-
   const definingDocument =
-    index.getDefiningDocument(occurrence.symbol);
+    index.getDefiningDocument(symbol);
 
   return {
-    symbol: occurrence.symbol,
+    symbol,
     targetFile: definingDocument?.relativePath,
     resolved: true
   };
