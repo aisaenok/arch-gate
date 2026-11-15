@@ -730,9 +730,15 @@ export async function analyzeJavaRepository(
     EndpointDraft[]
   >();
 
-  // Keep the previous resolver running for shadow comparison and
-  // as the compatibility fallback when no SCIP index is configured.
-  for (const info of classes) {
+  const needsManualResolution =
+    !options.scipIndex ||
+    options.onImplementationResolution !== undefined;
+
+  // The legacy resolver is only a compatibility fallback or an
+  // explicit shadow-test input. Normal SCIP-authoritative analysis
+  // does not execute it.
+  if (needsManualResolution) {
+    for (const info of classes) {
     const inheritedEndpoints: EndpointDraft[] = [];
 
     for (const rawInterface of info.implementedInterfaces) {
@@ -799,6 +805,7 @@ export async function analyzeJavaRepository(
     }
 
     manualInheritedByClass.set(info, inheritedEndpoints);
+    }
   }
 
   const scipInheritedByClass = new Map<
