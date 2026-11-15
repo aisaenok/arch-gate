@@ -4,17 +4,24 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runCheck } from "../src/engine.js";
 import type { ResolvedGateConfig } from "../src/core/model.js";
+import {
+  writeSyntheticTypeScriptScipIndex
+} from "./helpers/typescript-scip.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../../");
 
-function config(
+async function config(
   fixture: string,
   generatedRuntimeDirs: string[] = [],
   allowDirectHttpDirs: string[] = []
-): ResolvedGateConfig {
+): Promise<ResolvedGateConfig> {
   const consumerRoot = path.join(root, `fixtures/${fixture}`);
   const contractRoot = path.join(root, "fixtures/api-contracts");
+  const scipIndexFile =
+    await writeSyntheticTypeScriptScipIndex(
+      consumerRoot
+    );
 
   return {
     configFile: "test",
@@ -33,7 +40,8 @@ function config(
           path.join(consumerRoot, dir)
         ),
         allowManualContractTypeDirs: [],
-        httpModules: ["axios"]
+        httpModules: ["axios"],
+        scipIndexFile
       },
       "contracts-core": {
         id: "contracts-core",
@@ -74,14 +82,14 @@ function config(
 
 test("allows HTTP reached through generated runtime", async () => {
   const result = await runCheck(
-    config("pl-valid", ["src/shared/api/generated"])
+    await config("pl-valid", ["src/shared/api/generated"])
   );
   assert.equal(result.status, "pass");
   assert.deepEqual(result.violations, []);
 });
 
 test("rejects direct axios call outside generated runtime", async () => {
-  const result = await runCheck(config("pl-invalid-direct"));
+  const result = await runCheck(await config("pl-invalid-direct"));
   assert.equal(
     result.violations.some(
       (violation) => violation.rule === "API001"
@@ -93,7 +101,7 @@ test("rejects direct axios call outside generated runtime", async () => {
 
 test("unused HTTP wrapper import does not create call reachability", async () => {
   const result = await runCheck(
-    config(
+    await config(
       "pl-unused-wrapper",
       [],
       ["src/shared/http"]
@@ -106,7 +114,7 @@ test("unused HTTP wrapper import does not create call reachability", async () =>
 
 test("calling a safe sibling function does not reach another HTTP function in the same module", async () => {
   const result = await runCheck(
-    config(
+    await config(
       "pl-wrapper-safe-sibling",
       [],
       ["src/shared/http"]
@@ -119,7 +127,7 @@ test("calling a safe sibling function does not reach another HTTP function in th
 
 test("actual wrapper call still reaches HTTP", async () => {
   const result = await runCheck(
-    config(
+    await config(
       "pl-wrapper-called",
       [],
       ["src/shared/http"]
@@ -137,7 +145,7 @@ test("actual wrapper call still reaches HTTP", async () => {
 
 test("imported module top-level HTTP side effect remains reachable", async () => {
   const result = await runCheck(
-    config(
+    await config(
       "pl-import-side-effect",
       [],
       ["src/shared/http"]
@@ -156,7 +164,7 @@ test("imported module top-level HTTP side effect remains reachable", async () =>
 
 test("Array.map callback function value contributes HTTP reachability", async () => {
   const result = await runCheck(
-    config(
+    await config(
       "pl-callback-array",
       [],
       ["src/shared/http"]
@@ -174,7 +182,7 @@ test("Array.map callback function value contributes HTTP reachability", async ()
 
 test("inline Array.map callback contributes HTTP reachability", async () => {
   const result = await runCheck(
-    config(
+    await config(
       "pl-callback-inline",
       [],
       ["src/shared/http"]
@@ -192,7 +200,7 @@ test("inline Array.map callback contributes HTTP reachability", async () => {
 
 test("unknown higher-order function with local callback makes HTTP reachability partial", async () => {
   const result = await runCheck(
-    config(
+    await config(
       "pl-callback-unknown",
       [],
       ["src/shared/http"]
@@ -211,7 +219,7 @@ test("unknown higher-order function with local callback makes HTTP reachability 
 
 test("interface-typed variable with concrete initializer resolves to concrete HTTP method", async () => {
   const result = await runCheck(
-    config(
+    await config(
       "pl-interface-concrete",
       [],
       ["src/shared/http"]
@@ -229,7 +237,7 @@ test("interface-typed variable with concrete initializer resolves to concrete HT
 
 test("interface parameter with HTTP-capable local implementation makes reachability partial", async () => {
   const result = await runCheck(
-    config(
+    await config(
       "pl-interface-parameter-http",
       [],
       ["src/shared/http"]
@@ -247,7 +255,7 @@ test("interface parameter with HTTP-capable local implementation makes reachabil
 
 test("interface parameter with only safe local implementation does not make HTTP reachability partial", async () => {
   const result = await runCheck(
-    config(
+    await config(
       "pl-interface-parameter-safe",
       [],
       ["src/shared/http"]
