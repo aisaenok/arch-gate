@@ -33,7 +33,6 @@ interface AnnotationInfo {
 interface EndpointDraft {
   className: string;
   methodName: string;
-  arity: number;
   offset: number;
   definitionOffset: number;
   operationId: string;
@@ -45,61 +44,22 @@ interface ParsedFile {
   file: string;
   source: string;
   root: SyntaxNode;
-  packageName: string;
-  imports: Map<string, string>;
-}
-
-interface InterfaceInfo {
-  name: string;
-  fqn: string;
-  file: ParsedFile;
-  endpoints: EndpointDraft[];
-}
-
-export interface JavaImplementationResolution {
-  repositoryId: string;
-  implementationSourceFile: string;
-  implementationLine: number;
-  implementationDefinitionLine: number;
-  implementationClassName: string;
-  implementationMethodName: string;
-  implementationArity: number;
-  interfaceSourceFile: string;
-  interfaceDefinitionLine: number;
-  interfaceName: string;
-  interfaceFqn: string;
-  interfaceMethodName: string;
-  interfaceArity: number;
 }
 
 export interface JavaInterfaceEndpointCandidate {
-  repositoryId: string;
   interfaceSourceFile: string;
   interfaceDefinitionLine: number;
-  interfaceName: string;
-  interfaceFqn: string;
   interfaceMethodName: string;
-  interfaceArity: number;
 }
 
 export interface JavaAnalysisOptions {
   scipIndex?: ScipIndex;
-  onImplementationResolution?: (
-    resolution: JavaImplementationResolution
-  ) => void;
-  onInterfaceEndpoint?: (
-    endpoint: JavaInterfaceEndpointCandidate
-  ) => void;
 }
 
 interface ClassInfo {
   name: string;
-  fqn: string;
   file: ParsedFile;
-  node: SyntaxNode;
   methodNodes: SyntaxNode[];
-  methods: Map<string, SyntaxNode>;
-  implementedInterfaces: string[];
   directEndpoints: EndpointDraft[];
 }
 
@@ -330,29 +290,6 @@ function methodName(
   return definition ? sourceText(definition, source) : "";
 }
 
-function methodArity(
-  methodNode: SyntaxNode
-): number {
-  const parameters = directChild(
-    methodNode,
-    "FormalParameters"
-  );
-  if (!parameters) return 0;
-
-  return directChildren(parameters).filter(
-    (child) =>
-      child.name === "FormalParameter" ||
-      child.name === "SpreadParameter"
-  ).length;
-}
-
-function methodSignature(
-  name: string,
-  arity: number
-): string {
-  return `${name}/${arity}`;
-}
-
 function endpointFromMethod(
   methodNode: SyntaxNode,
   className: string,
@@ -382,89 +319,12 @@ function endpointFromMethod(
   return {
     className,
     methodName: methodName(methodNode, source),
-    arity: methodArity(methodNode),
     offset: methodNode.from,
     definitionOffset: definition?.from ?? methodNode.from,
     operationId,
     method,
     path: joinPaths(classPath, methodPath)
   };
-}
-
-function packageName(source: string): string {
-  return (
-    source.match(
-      /^\s*package\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*;/m
-    )?.[1] ?? ""
-  );
-}
-
-function imports(source: string): Map<string, string> {
-  const result = new Map<string, string>();
-  const pattern =
-    /^\s*import\s+(?!static\b)([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)\s*;/gm;
-
-  for (const match of source.matchAll(pattern)) {
-    const fqn = match[1];
-    const simple = fqn.slice(fqn.lastIndexOf(".") + 1);
-    result.set(simple, fqn);
-  }
-
-  return result;
-}
-
-function typeFqn(packageValue: string, name: string): string {
-  return packageValue ? `${packageValue}.${name}` : name;
-}
-
-function implementedTypeNames(
-  node: SyntaxNode,
-  source: string
-): string[] {
-  const superInterfaces = directChild(
-    node,
-    "SuperInterfaces"
-  );
-  if (!superInterfaces) return [];
-
-  const interfaceList =
-    directChild(
-      superInterfaces,
-      "InterfaceTypeList"
-    ) ??
-    firstDescendant(
-      superInterfaces,
-      "InterfaceTypeList"
-    );
-  if (!interfaceList) return [];
-
-  return directChildren(interfaceList)
-    .filter((child) => child.name === "TypeName")
-    .map((child) => sourceText(child, source))
-    .filter(Boolean);
-}
-
-function resolveTypeName(
-  raw: string,
-  file: ParsedFile,
-  interfacesBySimpleName: Map<string, InterfaceInfo[]>
-): string | undefined {
-  const clean = raw.replace(/\s+/g, "");
-
-  if (clean.includes(".")) return clean;
-
-  const imported = file.imports.get(clean);
-  if (imported) return imported;
-
-  const samePackage = typeFqn(file.packageName, clean);
-  const samePackageInterface =
-    interfacesBySimpleName
-      .get(clean)
-      ?.find((item) => item.fqn === samePackage);
-  if (samePackageInterface) return samePackage;
-
-  const candidates = interfacesBySimpleName.get(clean) ?? [];
-  return candidates.length === 1 ? candidates[0].fqn : undefined;
 }
 
 function collectMethodNodeList(
@@ -479,28 +339,6 @@ function collectMethodNodeList(
   return directChildren(body).filter(
     (child) => child.name === "MethodDeclaration"
   );
-}
-
-function collectMethodNodes(
-  typeNode: SyntaxNode,
-  source: string
-): Map<string, SyntaxNode> {
-  const result = new Map<string, SyntaxNode>();
-
-  for (const child of collectMethodNodeList(typeNode)) {
-    const name = methodName(child, source);
-    if (name) {
-      result.set(
-        methodSignature(
-          name,
-          methodArity(child)
-        ),
-        child
-      );
-    }
-  }
-
-  return result;
 }
 
 function directEndpoints(
@@ -597,10 +435,6 @@ export async function analyzeJavaRepository(
     };
   }
 
-  const needsManualResolution =
-    !options.scipIndex ||
-    options.onImplementationResolution !== undefined;
-
   const sourceDirFailures: string[] = [];
   const discoveredFiles: string[] = [];
 
@@ -650,176 +484,57 @@ export async function analyzeJavaRepository(
     parsedFiles.push({
       file,
       source,
-      root: tree.topNode,
-      packageName: packageName(source),
-      imports: needsManualResolution
-        ? imports(source)
-        : new Map<string, string>()
+      root: tree.topNode
     });
   }
 
-  const interfaces = new Map<string, InterfaceInfo>();
-  const interfacesBySimpleName = new Map<
-    string,
-    InterfaceInfo[]
-  >();
   const interfaceEndpointEntries: InterfaceEndpointEntry[] = [];
   const classes: ClassInfo[] = [];
 
   for (const file of parsedFiles) {
     for (const type of topLevelTypes(file)) {
       const name = definitionName(type.node, file.source);
-      const fqn = typeFqn(file.packageName, name);
 
       if (type.kind === "interface") {
-        const info: InterfaceInfo = {
-          name,
-          fqn,
-          file,
-          endpoints: directEndpoints(type.node, file.source)
-        };
-        if (needsManualResolution) {
-          interfaces.set(fqn, info);
-        }
-
+        const endpoints = directEndpoints(
+          type.node,
+          file.source
+        );
         const starts = lineStarts(file.source);
         const sourceFile = relativeToRoot(
           file.file,
           repository.root
         );
-        for (const endpoint of info.endpoints) {
-          const candidate: JavaInterfaceEndpointCandidate = {
-            repositoryId: repository.id,
-            interfaceSourceFile: sourceFile,
-            interfaceDefinitionLine: lineAt(
-              starts,
-              endpoint.definitionOffset
-            ),
-            interfaceName: info.name,
-            interfaceFqn: info.fqn,
-            interfaceMethodName: endpoint.methodName,
-            interfaceArity: endpoint.arity
-          };
 
+        for (const endpoint of endpoints) {
           interfaceEndpointEntries.push({
             endpoint,
-            candidate
+            candidate: {
+              interfaceSourceFile: sourceFile,
+              interfaceDefinitionLine: lineAt(
+                starts,
+                endpoint.definitionOffset
+              ),
+              interfaceMethodName: endpoint.methodName
+            }
           });
-          options.onInterfaceEndpoint?.(candidate);
-        }
-
-        if (needsManualResolution) {
-          const byName =
-            interfacesBySimpleName.get(name) ?? [];
-          byName.push(info);
-          interfacesBySimpleName.set(name, byName);
         }
         continue;
       }
 
       classes.push({
         name,
-        fqn,
         file,
-        node: type.node,
         methodNodes: collectMethodNodeList(type.node),
-        methods: needsManualResolution
-          ? collectMethodNodes(type.node, file.source)
-          : new Map<string, SyntaxNode>(),
-        implementedInterfaces: needsManualResolution
-          ? implementedTypeNames(
-              type.node,
-              file.source
-            )
-          : [],
-        directEndpoints: directEndpoints(type.node, file.source)
+        directEndpoints: directEndpoints(
+          type.node,
+          file.source
+        )
       });
     }
   }
 
   const facts: Fact[] = [];
-  const manualInheritedByClass = new Map<
-    ClassInfo,
-    EndpointDraft[]
-  >();
-
-  // The legacy resolver is only a compatibility fallback or an
-  // explicit shadow-test input. Normal SCIP-authoritative analysis
-  // does not execute it.
-  if (needsManualResolution) {
-    for (const info of classes) {
-      const inheritedEndpoints: EndpointDraft[] = [];
-
-      for (const rawInterface of info.implementedInterfaces) {
-        const resolved = resolveTypeName(
-          rawInterface,
-          info.file,
-          interfacesBySimpleName
-        );
-        if (!resolved) continue;
-
-        const interfaceInfo = interfaces.get(resolved);
-        if (!interfaceInfo) continue;
-
-        for (const endpoint of interfaceInfo.endpoints) {
-          const implementationMethod = info.methods.get(
-            methodSignature(
-              endpoint.methodName,
-              endpoint.arity
-            )
-          );
-          if (!implementationMethod) continue;
-
-          options.onImplementationResolution?.({
-            repositoryId: repository.id,
-            implementationSourceFile: relativeToRoot(
-              info.file.file,
-              repository.root
-            ),
-            implementationLine: lineAt(
-              lineStarts(info.file.source),
-              implementationMethod.from
-            ),
-            implementationDefinitionLine: lineAt(
-              lineStarts(info.file.source),
-              methodDefinitionNode(implementationMethod)?.from ??
-                implementationMethod.from
-            ),
-            implementationClassName: info.name,
-            implementationMethodName: endpoint.methodName,
-            implementationArity: endpoint.arity,
-            interfaceSourceFile: relativeToRoot(
-              interfaceInfo.file.file,
-              repository.root
-            ),
-            interfaceDefinitionLine: lineAt(
-              lineStarts(interfaceInfo.file.source),
-              endpoint.definitionOffset
-            ),
-            interfaceName: interfaceInfo.name,
-            interfaceFqn: interfaceInfo.fqn,
-            interfaceMethodName: endpoint.methodName,
-            interfaceArity: endpoint.arity
-          });
-
-          inheritedEndpoints.push({
-            ...endpoint,
-            className: info.name,
-            offset: implementationMethod.from,
-            definitionOffset:
-              methodDefinitionNode(implementationMethod)?.from ??
-              implementationMethod.from
-          });
-        }
-      }
-
-      manualInheritedByClass.set(
-        info,
-        inheritedEndpoints
-      );
-    }
-  }
-
   const scipInheritedByClass = new Map<
     ClassInfo,
     EndpointDraft[]
@@ -910,9 +625,8 @@ export async function analyzeJavaRepository(
   }
 
   for (const info of classes) {
-    const inheritedEndpoints = options.scipIndex
-      ? scipInheritedByClass.get(info) ?? []
-      : manualInheritedByClass.get(info) ?? [];
+    const inheritedEndpoints =
+      scipInheritedByClass.get(info) ?? [];
 
     const seen = new Set<string>();
     const endpoints = [
@@ -933,6 +647,12 @@ export async function analyzeJavaRepository(
         info.file.source,
         endpoints
       )
+    );
+  }
+
+  if (!options.scipIndex && interfaceEndpointEntries.length > 0) {
+    scipResolutionFailures.push(
+      "SCIP index is required to resolve JAX-RS interface endpoint implementations"
     );
   }
 
