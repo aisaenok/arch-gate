@@ -17,8 +17,7 @@ import {
   SymbolRole
 } from "@scip-code/scip";
 import {
-  buildArchitectureModel,
-  runCheck
+  buildArchitectureModel
 } from "../src/engine.js";
 import type {
   ResolvedGateConfig,
@@ -314,38 +313,16 @@ test("SCIP-authoritative Java resolution emits endpoint missed by the manual res
   );
 });
 
-test("Java SCIP shadow mismatch is diagnostic-only in normal check pipeline", async (t) => {
+test("normal SCIP-authoritative pipeline does not run legacy Java shadow resolution", async (t) => {
   const repository =
     await javaInheritanceFixture(t);
 
-  const result = await runCheck(
+  const model = await buildArchitectureModel(
     gateConfig(repository)
   );
 
-  assert.equal(result.status, "pass");
-  assert.deepEqual(result.violations, []);
-  assert.deepEqual(result.gaps, []);
-  assert.equal(result.diagnostics?.length, 1);
-  assert.equal(
-    result.diagnostics?.[0]?.code,
-    "SCIP_JAVA_MANUAL_RESOLUTION_MISSING"
-  );
-  assert.equal(
-    result.diagnostics?.[0]?.repositoryId,
-    "backend"
-  );
-  assert.equal(
-    result.diagnostics?.[0]?.details?.reason,
-    "manual-resolution-missing"
-  );
-  assert.equal(
-    result.diagnostics?.[0]?.details?.interface,
-    "dev.test.api.BaseApi#getApplication/1"
-  );
-  assert.equal(
-    result.diagnostics?.[0]?.details?.implementationSource,
-    "src/main/java/dev/test/Controller.java:7"
-  );
+  assert.equal(model.facts.length, 1);
+  assert.deepEqual(model.diagnostics, []);
 });
 
 
@@ -488,19 +465,7 @@ test("configured SCIP is authoritative over the legacy manual Java resolver", as
 
   assert.equal(model.facts.length, 0);
   assert.equal(model.evidence[0]?.status, "complete");
-  assert.equal(model.diagnostics?.length, 1);
-  assert.equal(
-    model.diagnostics?.[0]?.code,
-    "SCIP_JAVA_SHADOW_MISMATCH"
-  );
-  assert.equal(
-    model.diagnostics?.[0]?.details?.direction,
-    "manual-to-scip"
-  );
-  assert.equal(
-    model.diagnostics?.[0]?.details?.reason,
-    "implementation-relationship-missing"
-  );
+  assert.deepEqual(model.diagnostics, []);
 });
 
 test("legacy manual Java resolution remains the fallback without SCIP", async (t) => {
