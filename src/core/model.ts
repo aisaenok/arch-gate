@@ -167,9 +167,18 @@ export interface FactEvidence {
   message?: string;
 }
 
+export interface AnalysisDiagnostic {
+  severity: "warning";
+  code: string;
+  repositoryId?: string;
+  message: string;
+  details?: Record<string, string>;
+}
+
 export interface AnalysisResult {
   facts: Fact[];
   evidence: FactEvidence[];
+  diagnostics?: AnalysisDiagnostic[];
 }
 
 export interface ArchitectureModel {
@@ -177,6 +186,7 @@ export interface ArchitectureModel {
   relations: RepositoryRelation[];
   facts: Fact[];
   evidence: FactEvidence[];
+  diagnostics?: AnalysisDiagnostic[];
 }
 
 export interface Violation {
@@ -198,6 +208,7 @@ export interface EvaluationResult {
   status: GateStatus;
   violations: Violation[];
   gaps: CoverageGap[];
+  diagnostics?: AnalysisDiagnostic[];
 }
 
 export interface ArchitectureIntent {
