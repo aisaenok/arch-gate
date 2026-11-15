@@ -283,6 +283,37 @@ public final class Controller implements ApplicationApi {
   };
 }
 
+test("SCIP-authoritative Java resolution emits endpoint missed by the manual resolver", async (t) => {
+  const repository =
+    await javaInheritanceFixture(t);
+
+  const model = await buildArchitectureModel(
+    gateConfig(repository)
+  );
+
+  assert.equal(model.facts.length, 1);
+  assert.equal(
+    model.facts[0]?.className,
+    "Controller"
+  );
+  assert.equal(
+    model.facts[0]?.methodName,
+    "getApplication"
+  );
+  assert.equal(
+    model.facts[0]?.operationKey,
+    "GET /api/applications/{}"
+  );
+  assert.equal(
+    model.facts[0]?.sourceFile,
+    "src/main/java/dev/test/Controller.java"
+  );
+  assert.equal(
+    model.evidence[0]?.status,
+    "complete"
+  );
+});
+
 test("Java SCIP shadow mismatch is diagnostic-only in normal check pipeline", async (t) => {
   const repository =
     await javaInheritanceFixture(t);
@@ -315,4 +346,176 @@ test("Java SCIP shadow mismatch is diagnostic-only in normal check pipeline", as
     result.diagnostics?.[0]?.details?.implementationSource,
     "src/main/java/dev/test/Controller.java:7"
   );
+});
+
+
+async function javaDirectInterfaceFixture(
+  t: test.TestContext,
+  includeScipRelationship: boolean
+): Promise<ResolvedJavaRepository> {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "arch-gate-scip-authoritative-")
+  );
+
+  t.after(async () => {
+    await rm(root, {
+      recursive: true,
+      force: true
+    });
+  });
+
+  const sourceDir = path.join(root, "src/main/java");
+  const apiDir = path.join(sourceDir, "dev/test/api");
+  const implementationDir = path.join(sourceDir, "dev/test");
+  await mkdir(apiDir, { recursive: true });
+
+  const applicationApi = `package dev.test.api;
+
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+
+@Path("/api/applications")
+public interface ApplicationApi {
+    @GET
+    @Path("/{id}")
+    String getApplication(String id);
+}
+`;
+
+  const controller = `package dev.test;
+
+import dev.test.api.ApplicationApi;
+
+public final class Controller implements ApplicationApi {
+    @Override
+    public String getApplication(String id) {
+        return id;
+    }
+}
+`;
+
+  await Promise.all([
+    writeFile(
+      path.join(apiDir, "ApplicationApi.java"),
+      applicationApi,
+      "utf8"
+    ),
+    writeFile(
+      path.join(implementationDir, "Controller.java"),
+      controller,
+      "utf8"
+    )
+  ]);
+
+  const interfaceMethod =
+    "scip-java maven fixture 1.0.0 dev/test/api/ApplicationApi#getApplication().";
+  const implementationMethod =
+    "scip-java maven fixture 1.0.0 dev/test/Controller#getApplication().";
+
+  const indexFile = path.join(root, "index.scip");
+  await writeFile(
+    indexFile,
+    toBinary(
+      IndexSchema,
+      create(IndexSchema, {
+        documents: [
+          {
+            relativePath:
+              "src/main/java/dev/test/api/ApplicationApi.java",
+            symbols: [
+              {
+                symbol: interfaceMethod,
+                displayName: "getApplication"
+              }
+            ],
+            occurrences: [
+              {
+                range: [9, 11, 9, 25],
+                symbol: interfaceMethod,
+                symbolRoles: SymbolRole.Definition
+              }
+            ]
+          },
+          {
+            relativePath:
+              "src/main/java/dev/test/Controller.java",
+            symbols: [
+              {
+                symbol: implementationMethod,
+                displayName: "getApplication",
+                relationships: includeScipRelationship
+                  ? [
+                      {
+                        symbol: interfaceMethod,
+                        isImplementation: true,
+                        isReference: true
+                      }
+                    ]
+                  : []
+              }
+            ],
+            occurrences: [
+              {
+                range: [6, 18, 6, 32],
+                symbol: implementationMethod,
+                symbolRoles: SymbolRole.Definition
+              }
+            ]
+          }
+        ]
+      })
+    )
+  );
+
+  return {
+    id: "backend",
+    type: "java",
+    root,
+    roles: ["api-provider"],
+    sourceDirs: [sourceDir],
+    frameworks: ["jax-rs"],
+    scipIndexFile: indexFile
+  };
+}
+
+test("configured SCIP is authoritative over the legacy manual Java resolver", async (t) => {
+  const repository =
+    await javaDirectInterfaceFixture(t, false);
+
+  const model = await buildArchitectureModel(
+    gateConfig(repository)
+  );
+
+  assert.equal(model.facts.length, 0);
+  assert.equal(model.evidence[0]?.status, "complete");
+  assert.equal(model.diagnostics?.length, 1);
+  assert.equal(
+    model.diagnostics?.[0]?.code,
+    "SCIP_JAVA_SHADOW_MISMATCH"
+  );
+  assert.equal(
+    model.diagnostics?.[0]?.details?.direction,
+    "manual-to-scip"
+  );
+  assert.equal(
+    model.diagnostics?.[0]?.details?.reason,
+    "implementation-relationship-missing"
+  );
+});
+
+test("legacy manual Java resolution remains the fallback without SCIP", async (t) => {
+  const repository =
+    await javaDirectInterfaceFixture(t, false);
+  delete repository.scipIndexFile;
+
+  const model = await buildArchitectureModel(
+    gateConfig(repository)
+  );
+
+  assert.equal(model.facts.length, 1);
+  assert.equal(
+    model.facts[0]?.operationKey,
+    "GET /api/applications/{}"
+  );
+  assert.deepEqual(model.diagnostics, []);
 });

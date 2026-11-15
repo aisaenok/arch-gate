@@ -4,6 +4,9 @@ import type { SyntaxNode } from "@lezer/common";
 import { parser } from "@lezer/java";
 import { operationKey } from "../core/routes.js";
 import type { ScipIndex } from "../scip/index.js";
+import {
+  resolveJavaEndpointImplementationsWithScip
+} from "../scip/java-resolution.js";
 import type {
   AnalysisResult,
   Fact,
@@ -94,9 +97,16 @@ interface ClassInfo {
   fqn: string;
   file: ParsedFile;
   node: SyntaxNode;
+  methodNodes: SyntaxNode[];
   methods: Map<string, SyntaxNode>;
   implementedInterfaces: string[];
   directEndpoints: EndpointDraft[];
+}
+
+interface InterfaceEndpointEntry {
+  info: InterfaceInfo;
+  endpoint: EndpointDraft;
+  candidate: JavaInterfaceEndpointCandidate;
 }
 
 function relativeToRoot(file: string, root: string): string {
@@ -458,18 +468,27 @@ function resolveTypeName(
   return candidates.length === 1 ? candidates[0].fqn : undefined;
 }
 
+function collectMethodNodeList(
+  typeNode: SyntaxNode
+): SyntaxNode[] {
+  const body =
+    directChild(typeNode, "ClassBody") ??
+    directChild(typeNode, "InterfaceBody");
+
+  if (!body) return [];
+
+  return directChildren(body).filter(
+    (child) => child.name === "MethodDeclaration"
+  );
+}
+
 function collectMethodNodes(
   typeNode: SyntaxNode,
   source: string
 ): Map<string, SyntaxNode> {
-  const body =
-    directChild(typeNode, "ClassBody") ??
-    directChild(typeNode, "InterfaceBody");
   const result = new Map<string, SyntaxNode>();
-  if (!body) return result;
 
-  for (const child of directChildren(body)) {
-    if (child.name !== "MethodDeclaration") continue;
+  for (const child of collectMethodNodeList(typeNode)) {
     const name = methodName(child, source);
     if (name) {
       result.set(
@@ -639,6 +658,7 @@ export async function analyzeJavaRepository(
     string,
     InterfaceInfo[]
   >();
+  const interfaceEndpointEntries: InterfaceEndpointEntry[] = [];
   const classes: ClassInfo[] = [];
 
   for (const file of parsedFiles) {
@@ -661,7 +681,7 @@ export async function analyzeJavaRepository(
           repository.root
         );
         for (const endpoint of info.endpoints) {
-          options.onInterfaceEndpoint?.({
+          const candidate: JavaInterfaceEndpointCandidate = {
             repositoryId: repository.id,
             interfaceSourceFile: sourceFile,
             interfaceDefinitionLine: lineAt(
@@ -672,7 +692,14 @@ export async function analyzeJavaRepository(
             interfaceFqn: info.fqn,
             interfaceMethodName: endpoint.methodName,
             interfaceArity: endpoint.arity
+          };
+
+          interfaceEndpointEntries.push({
+            info,
+            endpoint,
+            candidate
           });
+          options.onInterfaceEndpoint?.(candidate);
         }
 
         const byName = interfacesBySimpleName.get(name) ?? [];
@@ -686,6 +713,7 @@ export async function analyzeJavaRepository(
         fqn,
         file,
         node: type.node,
+        methodNodes: collectMethodNodeList(type.node),
         methods: collectMethodNodes(type.node, file.source),
         implementedInterfaces: implementedTypeNames(
           type.node,
@@ -697,7 +725,13 @@ export async function analyzeJavaRepository(
   }
 
   const facts: Fact[] = [];
+  const manualInheritedByClass = new Map<
+    ClassInfo,
+    EndpointDraft[]
+  >();
 
+  // Keep the previous resolver running for shadow comparison and
+  // as the compatibility fallback when no SCIP index is configured.
   for (const info of classes) {
     const inheritedEndpoints: EndpointDraft[] = [];
 
@@ -756,10 +790,110 @@ export async function analyzeJavaRepository(
         inheritedEndpoints.push({
           ...endpoint,
           className: info.name,
-          offset: implementationMethod.from
+          offset: implementationMethod.from,
+          definitionOffset:
+            methodDefinitionNode(implementationMethod)?.from ??
+            implementationMethod.from
         });
       }
     }
+
+    manualInheritedByClass.set(info, inheritedEndpoints);
+  }
+
+  const scipInheritedByClass = new Map<
+    ClassInfo,
+    EndpointDraft[]
+  >();
+  const scipResolutionFailures: string[] = [];
+
+  if (options.scipIndex) {
+    for (const entry of interfaceEndpointEntries) {
+      const resolution =
+        resolveJavaEndpointImplementationsWithScip(
+          options.scipIndex,
+          entry.candidate
+        );
+
+      if (resolution.interfaceSymbols.length === 0) {
+        scipResolutionFailures.push(
+          `${entry.candidate.interfaceSourceFile}:${entry.candidate.interfaceDefinitionLine}: SCIP interface method definition is missing`
+        );
+        continue;
+      }
+
+      for (
+        const symbol of
+        resolution.incompleteImplementationSymbols
+      ) {
+        scipResolutionFailures.push(
+          `${entry.candidate.interfaceSourceFile}:${entry.candidate.interfaceDefinitionLine}: SCIP implementation "${symbol}" has incomplete local definition metadata`
+        );
+      }
+
+      for (const target of resolution.implementations) {
+        const matches: Array<{
+          info: ClassInfo;
+          method: SyntaxNode;
+        }> = [];
+
+        for (const info of classes) {
+          if (
+            relativeToRoot(
+              info.file.file,
+              repository.root
+            ) !== target.implementationSourceFile
+          ) {
+            continue;
+          }
+
+          const starts = lineStarts(info.file.source);
+          for (const method of info.methodNodes) {
+            const definition = methodDefinitionNode(method);
+            const definitionLine = lineAt(
+              starts,
+              definition?.from ?? method.from
+            );
+
+            if (
+              definitionLine ===
+                target.implementationDefinitionLine &&
+              methodName(method, info.file.source) ===
+                target.implementationMethodName
+            ) {
+              matches.push({ info, method });
+            }
+          }
+        }
+
+        if (matches.length !== 1) {
+          scipResolutionFailures.push(
+            `${target.implementationSourceFile}:${target.implementationDefinitionLine}: expected one parsed Java method for SCIP implementation, found ${matches.length}`
+          );
+          continue;
+        }
+
+        const match = matches[0]!;
+        const inherited =
+          scipInheritedByClass.get(match.info) ?? [];
+
+        inherited.push({
+          ...entry.endpoint,
+          className: match.info.name,
+          offset: match.method.from,
+          definitionOffset:
+            methodDefinitionNode(match.method)?.from ??
+            match.method.from
+        });
+        scipInheritedByClass.set(match.info, inherited);
+      }
+    }
+  }
+
+  for (const info of classes) {
+    const inheritedEndpoints = options.scipIndex
+      ? scipInheritedByClass.get(info) ?? []
+      : manualInheritedByClass.get(info) ?? [];
 
     const seen = new Set<string>();
     const endpoints = [
@@ -785,7 +919,8 @@ export async function analyzeJavaRepository(
 
   const evidenceFailures = [
     ...sourceDirFailures,
-    ...parseFailures
+    ...parseFailures,
+    ...scipResolutionFailures
   ];
 
   const evidence: FactEvidence = evidenceFailures.length

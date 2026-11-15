@@ -1,11 +1,11 @@
-import {
-  SymbolRole,
-  type Occurrence
-} from "@scip-code/scip";
 import type {
   JavaImplementationResolution,
   JavaInterfaceEndpointCandidate
 } from "../analyzers/java.js";
+import {
+  javaDefinitionLine,
+  javaDefinitionSymbolsAt
+} from "./java-resolution.js";
 import type { ScipIndex } from "./index.js";
 
 export type JavaScipShadowMismatchReason =
@@ -52,75 +52,11 @@ export interface JavaScipParityResult {
   scipToManual: JavaScipReverseResult;
 }
 
-function occurrenceStartLine(
-  occurrence: Occurrence
-): number | undefined {
-  if (occurrence.typedRange.case === "singleLineRange") {
-    return occurrence.typedRange.value.line;
-  }
-
-  if (occurrence.typedRange.case === "multiLineRange") {
-    return occurrence.typedRange.value.startLine;
-  }
-
-  return occurrence.range[0];
-}
-
-function isDefinition(
-  occurrence: Occurrence
-): boolean {
-  return (
-    (occurrence.symbolRoles & SymbolRole.Definition) !== 0
-  );
-}
-
-function definitionSymbolsAt(
-  index: ScipIndex,
-  relativePath: string,
-  line: number,
-  displayName: string
-): string[] {
-  return index
-    .getOccurrences(relativePath)
-    .filter(
-      (occurrence) =>
-        isDefinition(occurrence) &&
-        occurrenceStartLine(occurrence) === line - 1
-    )
-    .filter((occurrence) => {
-      const information = index.getSymbolInformation(
-        occurrence.symbol
-      );
-      return information?.displayName === displayName;
-    })
-    .map((occurrence) => occurrence.symbol);
-}
-
-function definitionLine(
-  index: ScipIndex,
-  symbol: string
-): number | undefined {
-  const document = index.getDefiningDocument(symbol);
-  if (!document) return undefined;
-
-  const occurrence = document.occurrences.find(
-    (item) =>
-      item.symbol === symbol &&
-      isDefinition(item)
-  );
-
-  const line = occurrence
-    ? occurrenceStartLine(occurrence)
-    : undefined;
-
-  return line === undefined ? undefined : line + 1;
-}
-
 function implementationSymbolsAt(
   index: ScipIndex,
   resolution: JavaImplementationResolution
 ): string[] {
-  return definitionSymbolsAt(
+  return javaDefinitionSymbolsAt(
     index,
     resolution.implementationSourceFile,
     resolution.implementationDefinitionLine,
@@ -151,7 +87,7 @@ function hasExpectedImplementationRelationship(
         resolution.interfaceMethodName &&
       targetDocument?.relativePath ===
         resolution.interfaceSourceFile &&
-      definitionLine(index, relationship.symbol) ===
+      javaDefinitionLine(index, relationship.symbol) ===
         resolution.interfaceDefinitionLine
     );
   });
@@ -256,7 +192,7 @@ export function compareScipJavaImplementationsWithManual(
       continue;
     }
 
-    const interfaceSymbols = definitionSymbolsAt(
+    const interfaceSymbols = javaDefinitionSymbolsAt(
       index,
       endpoint.interfaceSourceFile,
       endpoint.interfaceDefinitionLine,
@@ -287,7 +223,7 @@ export function compareScipJavaImplementationsWithManual(
         implementationsChecked += 1;
 
         const implementationDefinitionLine =
-          definitionLine(index, implementationSymbol);
+          javaDefinitionLine(index, implementationSymbol);
 
         if (implementationDefinitionLine === undefined) {
           mismatches.push({
