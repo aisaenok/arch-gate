@@ -455,7 +455,7 @@ public final class Controller implements ApplicationApi {
   };
 }
 
-test("configured SCIP is authoritative over the legacy manual Java resolver", async (t) => {
+test("configured SCIP does not invent an interface implementation relation", async (t) => {
   const repository =
     await javaDirectInterfaceFixture(t, false);
 
@@ -468,7 +468,7 @@ test("configured SCIP is authoritative over the legacy manual Java resolver", as
   assert.deepEqual(model.diagnostics, []);
 });
 
-test("legacy manual Java resolution remains the fallback without SCIP", async (t) => {
+test("interface endpoint analysis without SCIP is partial instead of guessed", async (t) => {
   const repository =
     await javaDirectInterfaceFixture(t, false);
   delete repository.scipIndexFile;
@@ -477,10 +477,11 @@ test("legacy manual Java resolution remains the fallback without SCIP", async (t
     gateConfig(repository)
   );
 
-  assert.equal(model.facts.length, 1);
-  assert.equal(
-    model.facts[0]?.operationKey,
-    "GET /api/applications/{}"
+  assert.equal(model.facts.length, 0);
+  assert.equal(model.evidence[0]?.status, "partial");
+  assert.match(
+    model.evidence[0]?.message ?? "",
+    /SCIP index is required/
   );
   assert.deepEqual(model.diagnostics, []);
 });
