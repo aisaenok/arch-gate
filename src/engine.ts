@@ -4,8 +4,7 @@ import { analyzeOpenApiRepository } from "./analyzers/openapi.js";
 import { analyzeTypeScriptRepository } from "./analyzers/typescript.js";
 import { evaluateRules } from "./core/engine.js";
 import {
-  loadJavaScipInput,
-  loadTypeScriptScipInput
+  loadScipWorkspace
 } from "./scip/input.js";
 import type {
   AnalysisDiagnostic,
@@ -36,6 +35,19 @@ export async function buildArchitectureModel(
     ...(options.extraAnalysis?.diagnostics ?? [])
   ];
 
+  const analyzedRepositories = Object.values(
+    config.repositories
+  ).filter(
+    (repository) =>
+      repository.type === "java" ||
+      (repository.type === "typescript" &&
+        analyzeTypeScript)
+  );
+  const scipWorkspace =
+    await loadScipWorkspace(
+      analyzedRepositories
+    );
+
   for (const repository of Object.values(config.repositories)) {
     let analysis: AnalysisResult | undefined;
 
@@ -45,16 +57,21 @@ export async function buildArchitectureModel(
       repository.type === "typescript" &&
       analyzeTypeScript
     ) {
-      const scipIndex =
-        await loadTypeScriptScipInput(repository);
       analysis = await analyzeTypeScriptRepository(
         repository,
-        { scipIndex }
+        {
+          scipIndex:
+            scipWorkspace.getIndex(
+              repository.id
+            )
+        }
       );
     } else if (repository.type === "java") {
-      const scipIndex = await loadJavaScipInput(repository);
       analysis = await analyzeJavaRepository(repository, {
-        scipIndex
+        scipIndex:
+          scipWorkspace.getIndex(
+            repository.id
+          )
       });
     }
 
