@@ -404,3 +404,238 @@ test("SCIP transport identity survives a local re-export", async (t) => {
     "GET /api/admin"
   );
 });
+
+
+test("SCIP resolves local type alias provenance to generated request type", async (t) => {
+  const root = await mkdtemp(
+    path.join(
+      os.tmpdir(),
+      "arch-gate-ts-scip-type-provenance-"
+    )
+  );
+
+  t.after(async () => {
+    await rm(root, {
+      recursive: true,
+      force: true
+    });
+  });
+
+  const sourceDir = path.join(root, "src");
+  const generatedDir = path.join(
+    sourceDir,
+    "generated"
+  );
+  await mkdir(generatedDir, {
+    recursive: true
+  });
+
+  const featureSource = [
+    'import type { CreateRequest } from "./generated/models.js";',
+    'import { create } from "./generated/runtime.js";',
+    "",
+    "type Alias = CreateRequest;",
+    "",
+    "export function run() {",
+    '  const request: Alias = { name: "test" };',
+    "  return create(request);",
+    "}",
+    ""
+  ].join("\n");
+
+  const modelsSource = [
+    "export interface CreateRequest {",
+    "  name: string;",
+    "}",
+    ""
+  ].join("\n");
+
+  const runtimeSource = [
+    'import type { CreateRequest } from "./models.js";',
+    "",
+    "export function create(",
+    "  request: CreateRequest",
+    "): Promise<void> {",
+    "  void request;",
+    "  return Promise.resolve();",
+    "}",
+    ""
+  ].join("\n");
+
+  await Promise.all([
+    writeFile(
+      path.join(sourceDir, "feature.ts"),
+      featureSource,
+      "utf8"
+    ),
+    writeFile(
+      path.join(generatedDir, "models.ts"),
+      modelsSource,
+      "utf8"
+    ),
+    writeFile(
+      path.join(generatedDir, "runtime.ts"),
+      runtimeSource,
+      "utf8"
+    ),
+    writeFile(
+      path.join(root, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES2022",
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          strict: true,
+          noEmit: true
+        },
+        include: ["src"]
+      }),
+      "utf8"
+    )
+  ]);
+
+  const aliasSymbol =
+    "scip-typescript npm fixture 1.0.0 src/`feature.ts`/Alias#";
+  const requestSymbol =
+    "scip-typescript npm fixture 1.0.0 src/generated/`models.ts`/CreateRequest#";
+  const modelsModule =
+    "scip-typescript npm fixture 1.0.0 src/generated/`models.ts`/";
+  const runtimeModule =
+    "scip-typescript npm fixture 1.0.0 src/generated/`runtime.ts`/";
+
+  const featureLines = featureSource.split("\n");
+  const aliasDefinitionStart =
+    featureLines[3]!.indexOf("Alias");
+  const aliasTargetStart =
+    featureLines[3]!.indexOf(
+      "CreateRequest"
+    );
+  const aliasUsageStart =
+    featureLines[6]!.indexOf("Alias");
+  const modelsSpecifier =
+    '"./generated/models.js"';
+  const runtimeSpecifier =
+    '"./generated/runtime.js"';
+
+  const index = create(IndexSchema, {
+    documents: [
+      {
+        relativePath: "src/feature.ts",
+        occurrences: [
+          {
+            range: [
+              0,
+              featureLines[0]!.indexOf(
+                modelsSpecifier
+              ),
+              featureLines[0]!.indexOf(
+                modelsSpecifier
+              ) + modelsSpecifier.length
+            ],
+            symbol: modelsModule
+          },
+          {
+            range: [
+              1,
+              featureLines[1]!.indexOf(
+                runtimeSpecifier
+              ),
+              featureLines[1]!.indexOf(
+                runtimeSpecifier
+              ) + runtimeSpecifier.length
+            ],
+            symbol: runtimeModule
+          },
+          {
+            range: [
+              3,
+              aliasDefinitionStart,
+              aliasDefinitionStart + 5
+            ],
+            symbol: aliasSymbol
+          },
+          {
+            range: [
+              3,
+              aliasTargetStart,
+              aliasTargetStart +
+                "CreateRequest".length
+            ],
+            symbol: requestSymbol
+          },
+          {
+            range: [
+              6,
+              aliasUsageStart,
+              aliasUsageStart + 5
+            ],
+            symbol: aliasSymbol
+          }
+        ],
+        symbols: [
+          {
+            symbol: aliasSymbol,
+            displayName: "Alias"
+          }
+        ]
+      },
+      {
+        relativePath:
+          "src/generated/models.ts",
+        symbols: [
+          {
+            symbol: modelsModule,
+            displayName: "models"
+          },
+          {
+            symbol: requestSymbol,
+            displayName: "CreateRequest"
+          }
+        ]
+      },
+      {
+        relativePath:
+          "src/generated/runtime.ts",
+        symbols: [
+          {
+            symbol: runtimeModule,
+            displayName: "runtime"
+          }
+        ]
+      }
+    ]
+  });
+
+  const analysis =
+    await analyzeTypeScriptRepository(
+      {
+        id: "frontend",
+        type: "typescript",
+        root,
+        roles: ["api-consumer"],
+        sourceDir,
+        generatedRuntimeDirs: [
+          generatedDir
+        ],
+        allowDirectHttpDirs: [],
+        allowManualContractTypeDirs: [],
+        httpModules: ["axios"]
+      },
+      {
+        scipIndex: parseScipIndex(
+          toBinary(IndexSchema, index)
+        )
+      }
+    );
+
+  const boundary = analysis.facts.find(
+    (fact) =>
+      fact.kind === "api-boundary-type"
+  );
+
+  assert.ok(boundary);
+  assert.equal(
+    boundary.contractTypeProvenance,
+    true
+  );
+});

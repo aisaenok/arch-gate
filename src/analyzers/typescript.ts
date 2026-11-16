@@ -601,50 +601,122 @@ function typeName(
   );
 }
 
+interface TypeProvenanceContext {
+  repository: ResolvedTypeScriptRepository;
+  checker: ts.TypeChecker;
+  scipIndex?: ScipIndex;
+  typeAliasesByScipSymbol: Map<
+    string,
+    ts.TypeAliasDeclaration
+  >;
+}
+
+function checkerTypeReferenceIsGenerated(
+  node: ts.TypeReferenceNode,
+  checker: ts.TypeChecker,
+  generatedDirs: string[]
+): boolean {
+  let symbol = checker.getSymbolAtLocation(
+    node.typeName
+  );
+
+  if (
+    symbol &&
+    (symbol.flags & ts.SymbolFlags.Alias) !== 0
+  ) {
+    symbol = checker.getAliasedSymbol(symbol);
+  }
+
+  return (
+    symbol?.declarations?.some((declaration) =>
+      isInsideAny(
+        declaration.getSourceFile().fileName,
+        generatedDirs
+      )
+    ) ?? false
+  );
+}
+
 function typeNodeReferencesGenerated(
   node: ts.TypeNode,
-  checker: ts.TypeChecker,
-  generatedDirs: string[],
-  seen = new Set<ts.Symbol>()
+  context: TypeProvenanceContext,
+  seen = new Set<string>()
 ): boolean {
   if (ts.isTypeReferenceNode(node)) {
-    const symbol = checker.getSymbolAtLocation(
-      node.typeName
+    const symbol = scipSymbolForNode(
+      node.typeName,
+      context.repository,
+      context.scipIndex
     );
-    const target =
-      symbol &&
-      (symbol.flags & ts.SymbolFlags.Alias) !== 0
-        ? checker.getAliasedSymbol(symbol)
-        : symbol;
 
-    if (target && !seen.has(target)) {
-      seen.add(target);
+    if (symbol && !seen.has(symbol)) {
+      seen.add(symbol);
 
-      if (
-        target.declarations?.some((declaration) =>
-          isInsideAny(
-            declaration.getSourceFile().fileName,
-            generatedDirs
-          )
-        )
-      ) {
-        return true;
-      }
+      const sourceFile =
+        node.getSourceFile();
+      const sourceRelative = relativeToRoot(
+        sourceFile.fileName,
+        context.repository.root
+      );
+      const definingDocument =
+        context.scipIndex?.getDefiningDocument(
+          symbol,
+          sourceRelative
+        );
 
-      for (const declaration of
-        target.declarations ?? []) {
+      if (definingDocument) {
+        const targetAbsolute = path.resolve(
+          context.repository.root,
+          definingDocument.relativePath
+        );
+
         if (
-          ts.isTypeAliasDeclaration(declaration) &&
+          isInsideAny(
+            targetAbsolute,
+            context.repository.generatedRuntimeDirs
+          )
+        ) {
+          return true;
+        }
+
+        const alias =
+          context.typeAliasesByScipSymbol.get(
+            symbol
+          );
+
+        if (
+          alias &&
           typeNodeReferencesGenerated(
-            declaration.type,
-            checker,
-            generatedDirs,
+            alias.type,
+            context,
             seen
           )
         ) {
           return true;
         }
+      } else if (
+        checkerTypeReferenceIsGenerated(
+          node,
+          context.checker,
+          context.repository.generatedRuntimeDirs
+        )
+      ) {
+        // scip-typescript can reference symbols from another
+        // indexed project without embedding that project's
+        // defining document. Keep the TypeScript checker only
+        // for this cross-project provenance boundary.
+        return true;
       }
+    } else if (
+      !symbol &&
+      checkerTypeReferenceIsGenerated(
+        node,
+        context.checker,
+        context.repository.generatedRuntimeDirs
+      )
+    ) {
+      // Compatibility for incomplete/external SCIP evidence.
+      return true;
     }
   }
 
@@ -653,8 +725,7 @@ function typeNodeReferencesGenerated(
     if (!found && ts.isTypeNode(child)) {
       found = typeNodeReferencesGenerated(
         child,
-        checker,
-        generatedDirs,
+        context,
         seen
       );
     }
@@ -677,36 +748,31 @@ function declarationTypeNode(
 
 function argumentHasContractProvenance(
   argument: ts.Expression,
-  checker: ts.TypeChecker,
-  generatedDirs: string[]
+  context: TypeProvenanceContext
 ): boolean {
   if (ts.isObjectLiteralExpression(argument)) {
     return true;
   }
 
-  const actualType =
-    checker.getTypeAtLocation(argument);
-  if (
-    symbolDeclarationFiles(actualType).some((file) =>
-      isInsideAny(file, generatedDirs)
-    )
-  ) {
-    return true;
-  }
-
   if (ts.isIdentifier(argument)) {
-    const symbol = checker.getSymbolAtLocation(argument);
+    const symbol =
+      context.checker.getSymbolAtLocation(
+        argument
+      );
     const declarations = symbol?.declarations ?? [];
+    let hasExplicitType = false;
 
     for (const declaration of declarations) {
       const typeNode =
         declarationTypeNode(declaration);
+
+      if (!typeNode) continue;
+      hasExplicitType = true;
+
       if (
-        typeNode &&
         typeNodeReferencesGenerated(
           typeNode,
-          checker,
-          generatedDirs
+          context
         )
       ) {
         return true;
@@ -714,17 +780,29 @@ function argumentHasContractProvenance(
     }
 
     if (
-      declarations.some((declaration) => {
-        const typeNode =
-          declarationTypeNode(declaration);
-        return typeNode === undefined;
-      })
+      declarations.some((declaration) =>
+        declarationTypeNode(declaration) ===
+        undefined
+      )
     ) {
       return true;
     }
+
+    if (hasExplicitType) {
+      return false;
+    }
   }
 
-  return false;
+  const actualType =
+    context.checker.getTypeAtLocation(argument);
+
+  return symbolDeclarationFiles(actualType).some(
+    (file) =>
+      isInsideAny(
+        file,
+        context.repository.generatedRuntimeDirs
+      )
+  );
 }
 
 function sourceAllowedDirectHttp(
@@ -1105,6 +1183,10 @@ export async function analyzeTypeScriptRepository(
     Set<string>
   >();
   const classDeclarations: ts.ClassDeclaration[] = [];
+  const typeAliasesByScipSymbol = new Map<
+    string,
+    ts.TypeAliasDeclaration
+  >();
   const dynamicDispatches: DynamicDispatchRecord[] = [];
   let unresolvedInternalImports = 0;
   let unresolvedCallbackFlows = 0;
@@ -1143,6 +1225,24 @@ export async function analyzeTypeScriptRepository(
 
       if (ts.isClassDeclaration(node)) {
         classDeclarations.push(node);
+      }
+
+      if (
+        ts.isTypeAliasDeclaration(node) &&
+        analysisOptions.scipIndex
+      ) {
+        const symbol = scipSymbolForNode(
+          node.name,
+          repository,
+          analysisOptions.scipIndex
+        );
+
+        if (symbol) {
+          typeAliasesByScipSymbol.set(
+            symbol,
+            node
+          );
+        }
       }
 
       if (isExecutableFunction(node)) {
@@ -1580,8 +1680,13 @@ export async function analyzeTypeScriptRepository(
                 contractTypeProvenance:
                   argumentHasContractProvenance(
                     argument,
-                    checker,
-                    repository.generatedRuntimeDirs
+                    {
+                      repository,
+                      checker,
+                      scipIndex:
+                        analysisOptions.scipIndex,
+                      typeAliasesByScipSymbol
+                    }
                   )
               });
             }
