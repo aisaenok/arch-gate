@@ -1183,6 +1183,10 @@ export async function analyzeTypeScriptRepository(
     Set<string>
   >();
   const classDeclarations: ts.ClassDeclaration[] = [];
+  const typeAliasesByScipSymbol = new Map<
+    string,
+    ts.TypeAliasDeclaration
+  >();
   const dynamicDispatches: DynamicDispatchRecord[] = [];
   let unresolvedInternalImports = 0;
   let unresolvedCallbackFlows = 0;
@@ -1221,6 +1225,24 @@ export async function analyzeTypeScriptRepository(
 
       if (ts.isClassDeclaration(node)) {
         classDeclarations.push(node);
+      }
+
+      if (
+        ts.isTypeAliasDeclaration(node) &&
+        analysisOptions.scipIndex
+      ) {
+        const symbol = scipSymbolForNode(
+          node.name,
+          repository,
+          analysisOptions.scipIndex
+        );
+
+        if (symbol) {
+          typeAliasesByScipSymbol.set(
+            symbol,
+            node
+          );
+        }
       }
 
       if (isExecutableFunction(node)) {
@@ -1658,8 +1680,13 @@ export async function analyzeTypeScriptRepository(
                 contractTypeProvenance:
                   argumentHasContractProvenance(
                     argument,
-                    checker,
-                    repository.generatedRuntimeDirs
+                    {
+                      repository,
+                      checker,
+                      scipIndex:
+                        analysisOptions.scipIndex,
+                      typeAliasesByScipSymbol
+                    }
                   )
               });
             }
