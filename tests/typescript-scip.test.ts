@@ -26,6 +26,9 @@ import {
   parseScipIndex,
   type ScipIndex
 } from "../src/scip/index.js";
+import {
+  ScipWorkspace
+} from "../src/scip/workspace.js";
 
 interface Fixture {
   repository: ResolvedTypeScriptRepository;
@@ -638,4 +641,298 @@ test("SCIP resolves local type alias provenance to generated request type", asyn
     boundary.contractTypeProvenance,
     true
   );
+});
+
+
+test("cross-repository type provenance requires federated SCIP definition instead of checker fallback", async (t) => {
+  const parent = await mkdtemp(
+    path.join(
+      os.tmpdir(),
+      "arch-gate-ts-scip-federation-"
+    )
+  );
+
+  t.after(async () => {
+    await rm(parent, {
+      recursive: true,
+      force: true
+    });
+  });
+
+  const consumerRoot = path.join(
+    parent,
+    "consumer"
+  );
+  const generatedRoot = path.join(
+    parent,
+    "generated-client"
+  );
+  const consumerSource = path.join(
+    consumerRoot,
+    "src"
+  );
+  const generatedSource = path.join(
+    generatedRoot,
+    "src"
+  );
+
+  await Promise.all([
+    mkdir(consumerSource, {
+      recursive: true
+    }),
+    mkdir(generatedSource, {
+      recursive: true
+    })
+  ]);
+
+  const featureSource = [
+    'import type { CreateRequest } from "@generated/models";',
+    'import { create } from "@generated/runtime";',
+    "",
+    "type Alias = CreateRequest;",
+    "",
+    "export function run() {",
+    '  const request: Alias = { name: "test" };',
+    "  return create(request);",
+    "}",
+    ""
+  ].join("\n");
+
+  const modelsSource = [
+    "export interface CreateRequest {",
+    "  name: string;",
+    "}",
+    ""
+  ].join("\n");
+
+  const runtimeSource = [
+    'import type { CreateRequest } from "./models.js";',
+    "",
+    "export function create(",
+    "  request: CreateRequest",
+    "): Promise<void> {",
+    "  void request;",
+    "  return Promise.resolve();",
+    "}",
+    ""
+  ].join("\n");
+
+  await Promise.all([
+    writeFile(
+      path.join(
+        consumerSource,
+        "feature.ts"
+      ),
+      featureSource,
+      "utf8"
+    ),
+    writeFile(
+      path.join(
+        generatedSource,
+        "models.ts"
+      ),
+      modelsSource,
+      "utf8"
+    ),
+    writeFile(
+      path.join(
+        generatedSource,
+        "runtime.ts"
+      ),
+      runtimeSource,
+      "utf8"
+    ),
+    writeFile(
+      path.join(
+        consumerRoot,
+        "tsconfig.json"
+      ),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES2022",
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          strict: true,
+          noEmit: true,
+          baseUrl: ".",
+          paths: {
+            "@generated/*": [
+              "../generated-client/src/*"
+            ]
+          }
+        },
+        include: ["src"]
+      }),
+      "utf8"
+    )
+  ]);
+
+  const aliasSymbol =
+    "scip-typescript npm consumer 1.0.0 src/\`feature.ts\`/Alias#";
+  const requestSymbol =
+    "scip-typescript npm generated-client 1.0.0 src/\`models.ts\`/CreateRequest#";
+
+  const lines = featureSource.split("\n");
+  const aliasDefinitionStart =
+    lines[3]!.indexOf("Alias");
+  const aliasTargetStart =
+    lines[3]!.indexOf("CreateRequest");
+  const aliasUsageStart =
+    lines[6]!.indexOf("Alias");
+
+  const consumerIndex = parseScipIndex(
+    toBinary(
+      IndexSchema,
+      create(IndexSchema, {
+        documents: [
+          {
+            relativePath: "src/feature.ts",
+            occurrences: [
+              {
+                range: [
+                  3,
+                  aliasDefinitionStart,
+                  aliasDefinitionStart + 5
+                ],
+                symbol: aliasSymbol
+              },
+              {
+                range: [
+                  3,
+                  aliasTargetStart,
+                  aliasTargetStart +
+                    "CreateRequest".length
+                ],
+                symbol: requestSymbol
+              },
+              {
+                range: [
+                  6,
+                  aliasUsageStart,
+                  aliasUsageStart + 5
+                ],
+                symbol: aliasSymbol
+              }
+            ],
+            symbols: [
+              {
+                symbol: aliasSymbol,
+                displayName: "Alias"
+              }
+            ]
+          }
+        ],
+        externalSymbols: [
+          {
+            symbol: requestSymbol,
+            displayName: "CreateRequest"
+          }
+        ]
+      })
+    )
+  );
+
+  const generatedIndex = parseScipIndex(
+    toBinary(
+      IndexSchema,
+      create(IndexSchema, {
+        documents: [
+          {
+            relativePath: "src/models.ts",
+            symbols: [
+              {
+                symbol: requestSymbol,
+                displayName: "CreateRequest"
+              }
+            ]
+          }
+        ]
+      })
+    )
+  );
+
+  const repository: ResolvedTypeScriptRepository = {
+    id: "consumer",
+    type: "typescript",
+    root: consumerRoot,
+    roles: ["api-consumer"],
+    sourceDir: consumerSource,
+    generatedRuntimeDirs: [
+      generatedSource
+    ],
+    allowDirectHttpDirs: [],
+    allowManualContractTypeDirs: [],
+    httpModules: ["axios"]
+  };
+
+  const withoutWorkspace =
+    await analyzeTypeScriptRepository(
+      repository,
+      {
+        scipIndex: consumerIndex
+      }
+    );
+
+  assert.equal(
+    withoutWorkspace.facts.some(
+      (fact) =>
+        fact.kind === "api-boundary-type"
+    ),
+    false
+  );
+
+  const missingEvidence =
+    withoutWorkspace.evidence.find(
+      (item) =>
+        item.factKind === "api-boundary-type"
+    );
+
+  assert.equal(
+    missingEvidence?.status,
+    "partial"
+  );
+  assert.match(
+    missingEvidence?.message ?? "",
+    /configured SCIP workspace/
+  );
+
+  const workspace = new ScipWorkspace([
+    {
+      repositoryId: "consumer",
+      repositoryRoot: consumerRoot,
+      index: consumerIndex
+    },
+    {
+      repositoryId: "generated-client",
+      repositoryRoot: generatedRoot,
+      index: generatedIndex
+    }
+  ]);
+
+  const withWorkspace =
+    await analyzeTypeScriptRepository(
+      repository,
+      {
+        scipIndex: consumerIndex,
+        scipWorkspace: workspace
+      }
+    );
+
+  const boundary = withWorkspace.facts.find(
+    (fact) =>
+      fact.kind === "api-boundary-type"
+  );
+
+  assert.ok(boundary);
+  assert.equal(
+    boundary.contractTypeProvenance,
+    true
+  );
+
+  const evidence = withWorkspace.evidence.find(
+    (item) =>
+      item.factKind === "api-boundary-type"
+  );
+
+  assert.equal(evidence?.status, "complete");
 });
