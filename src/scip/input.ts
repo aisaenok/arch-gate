@@ -1,17 +1,15 @@
 import type {
-  ResolvedJavaRepository,
-  ResolvedRepository,
-  ResolvedTypeScriptRepository
+  ResolvedRepository
 } from "../core/model.js";
 import {
-  loadScipIndex,
-  type ScipIndex
+  loadScipIndex
 } from "./index.js";
 import { ScipWorkspace } from "./workspace.js";
 
-type ScipRepository =
-  | ResolvedJavaRepository
-  | ResolvedTypeScriptRepository;
+type ScipRepository = Extract<
+  ResolvedRepository,
+  { type: "java" | "typescript" }
+>;
 
 function hasScipInput(
   repository: ResolvedRepository
@@ -42,24 +40,4 @@ export async function loadScipWorkspace(
   );
 
   return new ScipWorkspace(entries);
-}
-
-export async function loadJavaScipInput(
-  repository: ResolvedJavaRepository
-): Promise<ScipIndex | undefined> {
-  if (!repository.scipIndexFile) {
-    return undefined;
-  }
-
-  return loadScipIndex(repository.scipIndexFile);
-}
-
-export async function loadTypeScriptScipInput(
-  repository: ResolvedTypeScriptRepository
-): Promise<ScipIndex | undefined> {
-  if (!repository.scipIndexFile) {
-    return undefined;
-  }
-
-  return loadScipIndex(repository.scipIndexFile);
 }
