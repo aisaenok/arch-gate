@@ -3,6 +3,7 @@ import path from "node:path";
 import ts from "typescript";
 import { operationKey } from "../core/routes.js";
 import type { ScipIndex } from "../scip/index.js";
+import type { ScipWorkspace } from "../scip/workspace.js";
 import {
   resolveTypeScriptModuleSpecifierWithScip,
   resolveTypeScriptSymbolAtRange,
@@ -81,6 +82,7 @@ interface DynamicDispatchRecord {
 
 export interface TypeScriptAnalysisOptions {
   scipIndex?: ScipIndex;
+  scipWorkspace?: ScipWorkspace;
 }
 
 function isInside(file: string, directory: string): boolean {
@@ -601,47 +603,48 @@ function typeName(
   );
 }
 
+type TypeProvenanceResolution =
+  | "generated"
+  | "not-generated"
+  | "unresolved";
+
 interface TypeProvenanceContext {
   repository: ResolvedTypeScriptRepository;
   checker: ts.TypeChecker;
   scipIndex?: ScipIndex;
+  scipWorkspace?: ScipWorkspace;
   typeAliasesByScipSymbol: Map<
     string,
     ts.TypeAliasDeclaration
   >;
 }
 
-function checkerTypeReferenceIsGenerated(
-  node: ts.TypeReferenceNode,
-  checker: ts.TypeChecker,
-  generatedDirs: string[]
-): boolean {
-  let symbol = checker.getSymbolAtLocation(
-    node.typeName
-  );
-
+function mergeTypeProvenance(
+  current: TypeProvenanceResolution,
+  next: TypeProvenanceResolution
+): TypeProvenanceResolution {
   if (
-    symbol &&
-    (symbol.flags & ts.SymbolFlags.Alias) !== 0
+    current === "generated" ||
+    next === "generated"
   ) {
-    symbol = checker.getAliasedSymbol(symbol);
+    return "generated";
   }
 
-  return (
-    symbol?.declarations?.some((declaration) =>
-      isInsideAny(
-        declaration.getSourceFile().fileName,
-        generatedDirs
-      )
-    ) ?? false
-  );
+  if (
+    current === "unresolved" ||
+    next === "unresolved"
+  ) {
+    return "unresolved";
+  }
+
+  return "not-generated";
 }
 
 function typeNodeReferencesGenerated(
   node: ts.TypeNode,
   context: TypeProvenanceContext,
   seen = new Set<string>()
-): boolean {
+): TypeProvenanceResolution {
   if (ts.isTypeReferenceNode(node)) {
     const symbol = scipSymbolForNode(
       node.typeName,
@@ -649,88 +652,100 @@ function typeNodeReferencesGenerated(
       context.scipIndex
     );
 
-    if (symbol && !seen.has(symbol)) {
-      seen.add(symbol);
+    if (!symbol) {
+      return "unresolved";
+    }
 
-      const sourceFile =
-        node.getSourceFile();
-      const sourceRelative = relativeToRoot(
-        sourceFile.fileName,
-        context.repository.root
+    if (seen.has(symbol)) {
+      return "not-generated";
+    }
+
+    seen.add(symbol);
+
+    const sourceFile =
+      node.getSourceFile();
+    const sourceRelative = relativeToRoot(
+      sourceFile.fileName,
+      context.repository.root
+    );
+
+    const localDocument =
+      context.scipIndex?.getDefiningDocument(
+        symbol,
+        sourceRelative
       );
-      const definingDocument =
-        context.scipIndex?.getDefiningDocument(
-          symbol,
-          sourceRelative
-        );
 
-      if (definingDocument) {
-        const targetAbsolute = path.resolve(
+    const localAbsolute = localDocument
+      ? path.resolve(
           context.repository.root,
-          definingDocument.relativePath
-        );
-
-        if (
-          isInsideAny(
-            targetAbsolute,
-            context.repository.generatedRuntimeDirs
-          )
-        ) {
-          return true;
-        }
-
-        const alias =
-          context.typeAliasesByScipSymbol.get(
-            symbol
-          );
-
-        if (
-          alias &&
-          typeNodeReferencesGenerated(
-            alias.type,
-            context,
-            seen
-          )
-        ) {
-          return true;
-        }
-      } else if (
-        checkerTypeReferenceIsGenerated(
-          node,
-          context.checker,
-          context.repository.generatedRuntimeDirs
+          localDocument.relativePath
         )
-      ) {
-        // scip-typescript can reference symbols from another
-        // indexed project without embedding that project's
-        // defining document. Keep the TypeScript checker only
-        // for this cross-project provenance boundary.
-        return true;
-      }
-    } else if (
-      !symbol &&
-      checkerTypeReferenceIsGenerated(
-        node,
-        context.checker,
+      : undefined;
+
+    if (
+      localAbsolute &&
+      isInsideAny(
+        localAbsolute,
         context.repository.generatedRuntimeDirs
       )
     ) {
-      // Compatibility for incomplete/external SCIP evidence.
-      return true;
+      return "generated";
     }
+
+    if (localDocument) {
+      const alias =
+        context.typeAliasesByScipSymbol.get(
+          symbol
+        );
+
+      if (alias) {
+        return typeNodeReferencesGenerated(
+          alias.type,
+          context,
+          seen
+        );
+      }
+
+      return "not-generated";
+    }
+
+    const workspaceDefinition =
+      context.scipWorkspace?.findDefinition(
+        symbol
+      );
+
+    if (!workspaceDefinition) {
+      return "unresolved";
+    }
+
+    return isInsideAny(
+      workspaceDefinition.absolutePath,
+      context.repository.generatedRuntimeDirs
+    )
+      ? "generated"
+      : "not-generated";
   }
 
-  let found = false;
+  let resolution: TypeProvenanceResolution =
+    "not-generated";
+
   node.forEachChild((child) => {
-    if (!found && ts.isTypeNode(child)) {
-      found = typeNodeReferencesGenerated(
-        child,
-        context,
-        seen
+    if (
+      resolution !== "generated" &&
+      ts.isTypeNode(child)
+    ) {
+      resolution = mergeTypeProvenance(
+        resolution,
+        typeNodeReferencesGenerated(
+          child,
+          context,
+          seen
+        )
       );
     }
   });
-  return found;
+
+  return resolution;
 }
 
 function declarationTypeNode(
@@ -746,12 +761,12 @@ function declarationTypeNode(
   return undefined;
 }
 
-function argumentHasContractProvenance(
+function argumentContractProvenance(
   argument: ts.Expression,
   context: TypeProvenanceContext
-): boolean {
+): TypeProvenanceResolution {
   if (ts.isObjectLiteralExpression(argument)) {
-    return true;
+    return "generated";
   }
 
   if (ts.isIdentifier(argument)) {
@@ -761,6 +776,8 @@ function argumentHasContractProvenance(
       );
     const declarations = symbol?.declarations ?? [];
     let hasExplicitType = false;
+    let resolution: TypeProvenanceResolution =
+      "not-generated";
 
     for (const declaration of declarations) {
       const typeNode =
@@ -768,14 +785,16 @@ function argumentHasContractProvenance(
 
       if (!typeNode) continue;
       hasExplicitType = true;
-
-      if (
+      resolution = mergeTypeProvenance(
+        resolution,
         typeNodeReferencesGenerated(
           typeNode,
           context
         )
-      ) {
-        return true;
+      );
+
+      if (resolution === "generated") {
+        return resolution;
       }
     }
 
@@ -785,11 +804,11 @@ function argumentHasContractProvenance(
         undefined
       )
     ) {
-      return true;
+      return "generated";
     }
 
     if (hasExplicitType) {
-      return false;
+      return resolution;
     }
   }
 
@@ -802,7 +821,9 @@ function argumentHasContractProvenance(
         file,
         context.repository.generatedRuntimeDirs
       )
-  );
+  )
+    ? "generated"
+    : "not-generated";
 }
 
 function sourceAllowedDirectHttp(
@@ -1190,6 +1211,7 @@ export async function analyzeTypeScriptRepository(
   const dynamicDispatches: DynamicDispatchRecord[] = [];
   let unresolvedInternalImports = 0;
   let unresolvedCallbackFlows = 0;
+  let unresolvedTypeProvenance = 0;
 
   for (const absoluteFile of files) {
     const sourceFile =
@@ -1659,6 +1681,25 @@ export async function analyzeTypeScriptRepository(
               const actualType =
                 checker.getTypeAtLocation(argument);
 
+              const provenance =
+                argumentContractProvenance(
+                  argument,
+                  {
+                    repository,
+                    checker,
+                    scipIndex:
+                      analysisOptions.scipIndex,
+                    scipWorkspace:
+                      analysisOptions.scipWorkspace,
+                    typeAliasesByScipSymbol
+                  }
+                );
+
+              if (provenance === "unresolved") {
+                unresolvedTypeProvenance += 1;
+                continue;
+              }
+
               facts.push({
                 kind: "api-boundary-type",
                 repositoryId: repository.id,
@@ -1678,16 +1719,7 @@ export async function analyzeTypeScriptRepository(
                   checker
                 ),
                 contractTypeProvenance:
-                  argumentHasContractProvenance(
-                    argument,
-                    {
-                      repository,
-                      checker,
-                      scipIndex:
-                        analysisOptions.scipIndex,
-                      typeAliasesByScipSymbol
-                    }
-                  )
+                  provenance === "generated"
               });
             }
           }
@@ -1927,8 +1959,15 @@ export async function analyzeTypeScriptRepository(
       repositoryId: repository.id,
       producer: "typescript",
       factKind: "api-boundary-type",
-      status: importResolutionStatus,
-      message: importResolutionMessage
+      status:
+        importResolutionStatus === "complete" &&
+        unresolvedTypeProvenance === 0
+          ? "complete"
+          : "partial",
+      message:
+        unresolvedTypeProvenance > 0
+          ? `${unresolvedTypeProvenance} API boundary type reference(s) could not be resolved through the configured SCIP workspace.`
+          : importResolutionMessage
     }
   ];
 
