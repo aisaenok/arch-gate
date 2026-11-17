@@ -85,6 +85,16 @@ export interface TypeScriptAnalysisOptions {
   scipWorkspace?: ScipWorkspace;
 }
 
+/**
+ * Semantic ownership invariant:
+ * - SCIP / ScipWorkspace own module, symbol, and explicit definition identity.
+ * - TypeChecker owns signatures, inferred/expected types, assignability,
+ *   and local value-flow/execution semantics.
+ *
+ * Missing SCIP identity must degrade evidence to PARTIAL rather than being
+ * rescued through compiler declaration resolution.
+ */
+
 function isInside(file: string, directory: string): boolean {
   const relative = path.relative(directory, file);
   return (
