@@ -71,12 +71,20 @@ If Java syntax cannot be parsed, or a configured Java `sourceDir` is unavailable
 
 ## TypeScript semantics
 
-The TypeScript analyzer now uses a `Program` and `TypeChecker`, not isolated AST files.
+The TypeScript analyzer deliberately combines SCIP with a TypeScript `Program` and `TypeChecker`.
+
+Semantic ownership is explicit:
+
+- SCIP is authoritative for module resolution, stable symbol identity, transport identity, and explicit type-definition provenance, including cross-repository definitions through `ScipWorkspace`;
+- when configured SCIP evidence cannot resolve one of those identities, the analyzer reports `PARTIAL` rather than falling back to compiler declaration resolution;
+- the TypeChecker remains responsible for TypeScript type-system and execution questions: resolved call signatures, expected and inferred types, structural assignability, callback/callable analysis, and local value-flow/executable-scope reasoning.
+
+In short: the checker may answer "what type/call behavior does TypeScript infer here?", but it must not rescue missing SCIP identity/definition evidence.
 
 This enables:
 
-- import resolution and separate `module-dependency` facts;
-- resolving actual call targets with the TypeChecker;
+- SCIP-backed source-module resolution and separate `module-dependency` facts;
+- resolving execution targets with TypeChecker type/signature semantics while keeping symbol/declaration identity under the boundary above;
 - transitive call reachability through local functions, wrappers and generated runtime;
 - resolving local aliases back to `fetch` or configured HTTP modules before emitting `http-call`;
 - checking actual argument type provenance at the generated boundary;
@@ -227,7 +235,7 @@ npm run arch-gate -- check --config ./arch-gate.yml --format json
 
 This is still a PoC.
 
-- TypeScript resolution is compiler-based but not SCIP-based.
+- TypeScript semantic resolution is intentionally split: SCIP owns module/symbol/explicit-definition identity, while the TypeChecker owns type-system and execution semantics. Missing SCIP identity produces `PARTIAL` rather than a compiler fallback.
 - Call reachability follows statically resolved call targets, a bounded set of known standard callback APIs, and exact concrete bindings for interface-typed receivers. Unknown higher-order function execution and unresolved HTTP-capable interface dispatch are reported as partial evidence; arbitrary interprocedural value flow and runtime DI container resolution are intentionally not inferred.
 - Java endpoint extraction supports explicitly configured JAX-RS repositories, including repository-local interface metadata inheritance. Full Java type resolution, external interface inheritance, and Spring MVC are not implemented yet.
 - Repository relations support direct edges and explicit bounded paths; unrestricted graph reachability and wildcard graph queries are intentionally not implemented.
