@@ -33,6 +33,22 @@ export type ScipWorkspaceDefinitionResolution =
       definitions: ScipWorkspaceDefinition[];
     };
 
+export interface ScipWorkspaceImplementation {
+  implementationSymbol: string;
+  definition: ScipWorkspaceDefinition;
+}
+
+export interface ScipWorkspaceAmbiguousImplementation {
+  implementationSymbol: string;
+  definitions: ScipWorkspaceDefinition[];
+}
+
+export interface ScipWorkspaceImplementationResolution {
+  implementations: ScipWorkspaceImplementation[];
+  missingImplementationSymbols: string[];
+  ambiguousImplementations: ScipWorkspaceAmbiguousImplementation[];
+}
+
 export class ScipWorkspace {
   private readonly repositories = new Map<
     string,
@@ -134,5 +150,65 @@ export class ScipWorkspace {
     }
 
     return resolution.definition;
+  }
+
+  resolveImplementations(
+    interfaceSymbol: string
+  ): ScipWorkspaceImplementationResolution {
+    const implementationSymbols = new Set<string>();
+
+    if (
+      interfaceSymbol &&
+      !isLocalSymbol(interfaceSymbol)
+    ) {
+      for (const repository of this.repositories.values()) {
+        for (
+          const implementationSymbol of
+          repository.index.getImplementations(
+            interfaceSymbol
+          )
+        ) {
+          implementationSymbols.add(
+            implementationSymbol
+          );
+        }
+      }
+    }
+
+    const implementations: ScipWorkspaceImplementation[] = [];
+    const missingImplementationSymbols: string[] = [];
+    const ambiguousImplementations:
+      ScipWorkspaceAmbiguousImplementation[] = [];
+
+    for (const implementationSymbol of implementationSymbols) {
+      const resolution =
+        this.resolveDefinition(implementationSymbol);
+
+      if (resolution.status === "missing") {
+        missingImplementationSymbols.push(
+          implementationSymbol
+        );
+        continue;
+      }
+
+      if (resolution.status === "ambiguous") {
+        ambiguousImplementations.push({
+          implementationSymbol,
+          definitions: resolution.definitions
+        });
+        continue;
+      }
+
+      implementations.push({
+        implementationSymbol,
+        definition: resolution.definition
+      });
+    }
+
+    return {
+      implementations,
+      missingImplementationSymbols,
+      ambiguousImplementations
+    };
   }
 }

@@ -65,7 +65,7 @@ Java repositories configured with `frameworks: [jax-rs]` produce `backend-endpoi
 
 Annotated interfaces are treated as endpoint metadata declarations, not implementations. A `backend-endpoint` is emitted for an interface-declared endpoint only when a repository-local class actually `implements` that interface and declares the matching method. The fact source and `className` point to the concrete class, while HTTP/path/operation metadata is inherited from the interface.
 
-Interface method matching currently uses method name + arity rather than a full Java symbol/type solver. Same-name/same-arity overloads that differ only by parameter types remain a deliberate limitation.
+JAX-RS interface implementation matching is SCIP-backed. Repository-local endpoint inheritance follows SCIP implementation relationships and exact definition locations rather than method-name/arity guessing. The shared SCIP workspace can also resolve implementation relationships whose interface and implementation symbols live in different configured repository indexes; wiring that federated lookup into endpoint extraction is the remaining Java federation step.
 
 If Java syntax cannot be parsed, or a configured Java `sourceDir` is unavailable, endpoint evidence becomes `PARTIAL` rather than producing a false confident result. Available source roots are still analyzed, so partial evidence can coexist with valid endpoint facts.
 
