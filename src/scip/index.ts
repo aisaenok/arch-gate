@@ -30,6 +30,10 @@ export class ScipIndex {
     string,
     Set<string>
   >();
+  private readonly implementationTargetsBySymbol = new Map<
+    string,
+    Set<string>
+  >();
 
   constructor(readonly raw: Index) {
     for (const document of raw.documents) {
@@ -124,6 +128,16 @@ export class ScipIndex {
         relationship.symbol,
         implementations
       );
+
+      const targets =
+        this.implementationTargetsBySymbol.get(
+          information.symbol
+        ) ?? new Set<string>();
+      targets.add(relationship.symbol);
+      this.implementationTargetsBySymbol.set(
+        information.symbol,
+        targets
+      );
     }
   }
 
@@ -176,6 +190,18 @@ export class ScipIndex {
 
     return [
       ...(this.implementationsByTarget.get(symbol) ?? [])
+    ];
+  }
+
+  getImplementationTargets(
+    symbol: string
+  ): readonly string[] {
+    if (isLocalSymbol(symbol)) return [];
+
+    return [
+      ...(this.implementationTargetsBySymbol.get(
+        symbol
+      ) ?? [])
     ];
   }
 }
