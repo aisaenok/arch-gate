@@ -4,7 +4,10 @@ import type { SyntaxNode } from "@lezer/common";
 import { parser } from "@lezer/java";
 import { operationKey } from "../core/routes.js";
 import type { ScipIndex } from "../scip/index.js";
+import type { ScipWorkspace } from "../scip/workspace.js";
 import {
+  javaDefinitionLine,
+  javaDefinitionSymbolsAt,
   resolveJavaEndpointImplementationsWithScip
 } from "../scip/java-resolution.js";
 import type {
@@ -54,6 +57,7 @@ export interface JavaInterfaceEndpointCandidate {
 
 export interface JavaAnalysisOptions {
   scipIndex?: ScipIndex;
+  scipWorkspace?: ScipWorkspace;
 }
 
 interface ClassInfo {
@@ -391,6 +395,114 @@ function topLevelTypes(
   return result;
 }
 
+async function externalInterfaceEndpoint(
+  interfaceSymbol: string,
+  workspace: ScipWorkspace
+): Promise<
+  | { endpoint: EndpointDraft; repositoryId: string }
+  | { error: string }
+> {
+  const definitionResolution =
+    workspace.resolveDefinition(interfaceSymbol);
+
+  if (definitionResolution.status === "missing") {
+    return {
+      error:
+        `SCIP interface symbol "${interfaceSymbol}" has no workspace definition`
+    };
+  }
+
+  if (definitionResolution.status === "ambiguous") {
+    return {
+      error:
+        `SCIP interface symbol "${interfaceSymbol}" has definitions in multiple workspace repositories: ${definitionResolution.definitions
+          .map((definition) => definition.repositoryId)
+          .join(", ")}`
+    };
+  }
+
+  const definition = definitionResolution.definition;
+  const definitionLine = javaDefinitionLine(
+    definition.index,
+    interfaceSymbol
+  );
+  const information =
+    definition.index.getSymbolInformation(
+      interfaceSymbol
+    );
+
+  if (
+    definitionLine === undefined ||
+    !information?.displayName
+  ) {
+    return {
+      error:
+        `SCIP interface symbol "${interfaceSymbol}" has incomplete definition metadata`
+    };
+  }
+
+  let source: string;
+  try {
+    source = await readFile(
+      definition.absolutePath,
+      "utf8"
+    );
+  } catch {
+    return {
+      error:
+        `SCIP interface definition "${definition.absolutePath}" is unavailable`
+    };
+  }
+
+  const root = parser.parse(source).topNode;
+  if (hasParseError(root)) {
+    return {
+      error:
+        `SCIP interface definition "${definition.absolutePath}" could not be parsed`
+    };
+  }
+
+  const file: ParsedFile = {
+    file: definition.absolutePath,
+    source,
+    root
+  };
+  const starts = lineStarts(source);
+  const matches: EndpointDraft[] = [];
+
+  for (const type of topLevelTypes(file)) {
+    if (type.kind !== "interface") continue;
+
+    for (const endpoint of directEndpoints(
+      type.node,
+      source
+    )) {
+      if (
+        endpoint.methodName ===
+          information.displayName &&
+        lineAt(
+          starts,
+          endpoint.definitionOffset
+        ) === definitionLine
+      ) {
+        matches.push(endpoint);
+      }
+    }
+  }
+
+  if (matches.length !== 1) {
+    return {
+      error:
+        `${definition.document.relativePath}:${definitionLine}: expected one JAX-RS interface endpoint for SCIP symbol "${interfaceSymbol}", found ${matches.length}`
+    };
+  }
+
+  return {
+    endpoint: matches[0]!,
+    repositoryId: definition.repositoryId
+  };
+}
+
 function endpointFacts(
   repository: ResolvedJavaRepository,
   file: string,
@@ -620,6 +732,87 @@ export async function analyzeJavaRepository(
             match.method.from
         });
         scipInheritedByClass.set(match.info, inherited);
+      }
+    }
+  }
+
+
+  if (options.scipIndex) {
+    for (const info of classes) {
+      const sourceFile = relativeToRoot(
+        info.file.file,
+        repository.root
+      );
+      const starts = lineStarts(info.file.source);
+
+      for (const method of info.methodNodes) {
+        const definition = methodDefinitionNode(method);
+        const definitionLine = lineAt(
+          starts,
+          definition?.from ?? method.from
+        );
+        const name = methodName(
+          method,
+          info.file.source
+        );
+        const implementationSymbols =
+          javaDefinitionSymbolsAt(
+            options.scipIndex,
+            sourceFile,
+            definitionLine,
+            name
+          );
+
+        for (const implementationSymbol of
+          implementationSymbols) {
+          for (const interfaceSymbol of
+            options.scipIndex.getImplementationTargets(
+              implementationSymbol
+            )) {
+            const localInterface =
+              options.scipIndex.getDefiningDocument(
+                interfaceSymbol
+              );
+            if (localInterface) {
+              continue;
+            }
+
+            if (!options.scipWorkspace) {
+              scipResolutionFailures.push(
+                `${sourceFile}:${definitionLine}: SCIP workspace is required to resolve external interface "${interfaceSymbol}"`
+              );
+              continue;
+            }
+
+            const external =
+              await externalInterfaceEndpoint(
+                interfaceSymbol,
+                options.scipWorkspace
+              );
+
+            if ("error" in external) {
+              scipResolutionFailures.push(
+                `${sourceFile}:${definitionLine}: ${external.error}`
+              );
+              continue;
+            }
+
+            const inherited =
+              scipInheritedByClass.get(info) ?? [];
+
+            inherited.push({
+              ...external.endpoint,
+              className: info.name,
+              offset: method.from,
+              definitionOffset:
+                definition?.from ?? method.from
+            });
+            scipInheritedByClass.set(
+              info,
+              inherited
+            );
+          }
+        }
       }
     }
   }

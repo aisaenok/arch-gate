@@ -63,9 +63,9 @@ Intent produces:
 
 Java repositories configured with `frameworks: [jax-rs]` produce `backend-endpoint` facts from parsed Java syntax trees. The analyzer combines class/method `@Path` values with `@GET/@POST/@PUT/@PATCH/@DELETE/@HEAD/@OPTIONS` and normalizes them to the same `METHOD + path` key used by OpenAPI.
 
-Annotated interfaces are treated as endpoint metadata declarations, not implementations. A `backend-endpoint` is emitted for an interface-declared endpoint only when a repository-local class actually `implements` that interface and declares the matching method. The fact source and `className` point to the concrete class, while HTTP/path/operation metadata is inherited from the interface.
+Annotated interfaces are treated as endpoint metadata declarations, not implementations. A `backend-endpoint` is emitted only for a concrete implementation method. The fact source, repository and `className` point to that concrete backend method, while HTTP/path/operation metadata can be inherited from an annotated interface in the same repository or another configured Java repository.
 
-JAX-RS interface implementation matching is SCIP-backed. Repository-local endpoint inheritance follows SCIP implementation relationships and exact definition locations rather than method-name/arity guessing. The shared SCIP workspace can also resolve implementation relationships whose interface and implementation symbols live in different configured repository indexes; wiring that federated lookup into endpoint extraction is the remaining Java federation step.
+JAX-RS interface implementation matching is SCIP-backed. Repository-local and cross-repository endpoint inheritance follow SCIP implementation relationships and exact symbol definitions rather than method-name/arity guessing. Cross-repository lookup uses the shared `ScipWorkspace`; missing or ambiguous semantic ownership degrades endpoint evidence to `PARTIAL`.
 
 If Java syntax cannot be parsed, or a configured Java `sourceDir` is unavailable, endpoint evidence becomes `PARTIAL` rather than producing a false confident result. Available source roots are still analyzed, so partial evidence can coexist with valid endpoint facts.
 
@@ -237,7 +237,7 @@ This is still a PoC.
 
 - TypeScript semantic resolution is intentionally split: SCIP owns module/symbol/explicit-definition identity, while the TypeChecker owns type-system and execution semantics. Missing SCIP identity produces `PARTIAL` rather than a compiler fallback.
 - Call reachability follows statically resolved call targets, a bounded set of known standard callback APIs, and exact concrete bindings for interface-typed receivers. Unknown higher-order function execution and unresolved HTTP-capable interface dispatch are reported as partial evidence; arbitrary interprocedural value flow and runtime DI container resolution are intentionally not inferred.
-- Java endpoint extraction supports explicitly configured JAX-RS repositories, including repository-local interface metadata inheritance. Full Java type resolution, external interface inheritance, and Spring MVC are not implemented yet.
+- Java endpoint extraction supports explicitly configured JAX-RS repositories, including SCIP-backed interface metadata inheritance across configured repositories. General Java type resolution beyond endpoint implementation relationships and Spring MVC are not implemented yet.
 - Repository relations support direct edges and explicit bounded paths; unrestricted graph reachability and wildcard graph queries are intentionally not implemented.
 - No baseline/diff/impact/why graph tooling yet.
 - The YAML DSL stays intentionally small; semantic complexity belongs in analyzers/facts, not in increasingly programmable YAML.

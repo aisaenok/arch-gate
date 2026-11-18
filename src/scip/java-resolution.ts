@@ -21,7 +21,7 @@ export interface JavaScipEndpointResolution {
   incompleteImplementationSymbols: string[];
 }
 
-function occurrenceStartLine(
+export function occurrenceStartLine(
   occurrence: Occurrence
 ): number | undefined {
   if (occurrence.typedRange.case === "singleLineRange") {

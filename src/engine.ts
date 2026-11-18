@@ -72,7 +72,8 @@ export async function buildArchitectureModel(
         scipIndex:
           scipWorkspace.getIndex(
             repository.id
-          )
+          ),
+        scipWorkspace
       });
     }
 
