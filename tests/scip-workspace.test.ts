@@ -174,6 +174,158 @@ test("SCIP workspace reports ambiguous global definitions without losing candida
   );
 });
 
+test("SCIP workspace resolves implementations across repository indexes", () => {
+  const interfaceSymbol =
+    "scip-java maven api 1.0.0 dev/example/ApplicationApi#get().";
+  const implementationSymbol =
+    "scip-java maven backend 1.0.0 dev/example/ApplicationController#get().";
+
+  const interfaceIndex = parseScipIndex(
+    toBinary(
+      IndexSchema,
+      create(IndexSchema, {
+        documents: [
+          {
+            relativePath:
+              "src/main/java/dev/example/ApplicationApi.java",
+            symbols: [
+              {
+                symbol: interfaceSymbol,
+                displayName: "get"
+              }
+            ]
+          }
+        ]
+      })
+    )
+  );
+
+  const implementationIndex = parseScipIndex(
+    toBinary(
+      IndexSchema,
+      create(IndexSchema, {
+        documents: [
+          {
+            relativePath:
+              "src/main/java/dev/example/ApplicationController.java",
+            symbols: [
+              {
+                symbol: implementationSymbol,
+                displayName: "get",
+                relationships: [
+                  {
+                    symbol: interfaceSymbol,
+                    isImplementation: true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      })
+    )
+  );
+
+  const workspace = new ScipWorkspace([
+    {
+      repositoryId: "api",
+      repositoryRoot: "/workspace/api",
+      index: interfaceIndex
+    },
+    {
+      repositoryId: "backend",
+      repositoryRoot: "/workspace/backend",
+      index: implementationIndex
+    }
+  ]);
+
+  const resolution =
+    workspace.resolveImplementations(
+      interfaceSymbol
+    );
+
+  assert.deepEqual(
+    resolution.missingImplementationSymbols,
+    []
+  );
+  assert.deepEqual(
+    resolution.ambiguousImplementations,
+    []
+  );
+  assert.equal(
+    resolution.implementations.length,
+    1
+  );
+  assert.equal(
+    resolution.implementations[0]
+      ?.implementationSymbol,
+    implementationSymbol
+  );
+  assert.equal(
+    resolution.implementations[0]
+      ?.definition.repositoryId,
+    "backend"
+  );
+  assert.equal(
+    resolution.implementations[0]
+      ?.definition.document.relativePath,
+    "src/main/java/dev/example/ApplicationController.java"
+  );
+});
+
+test("SCIP workspace keeps unresolved implementation ownership explicit", () => {
+  const interfaceSymbol =
+    "scip-java maven api 1.0.0 dev/example/ApplicationApi#get().";
+  const missingImplementationSymbol =
+    "scip-java maven backend 1.0.0 dev/example/MissingController#get().";
+
+  const relationshipOnlyIndex = parseScipIndex(
+    toBinary(
+      IndexSchema,
+      create(IndexSchema, {
+        externalSymbols: [
+          {
+            symbol: missingImplementationSymbol,
+            displayName: "get",
+            relationships: [
+              {
+                symbol: interfaceSymbol,
+                isImplementation: true
+              }
+            ]
+          }
+        ]
+      })
+    )
+  );
+
+  const workspace = new ScipWorkspace([
+    {
+      repositoryId: "backend",
+      repositoryRoot: "/workspace/backend",
+      index: relationshipOnlyIndex
+    }
+  ]);
+
+  const resolution =
+    workspace.resolveImplementations(
+      interfaceSymbol
+    );
+
+  assert.deepEqual(
+    resolution.implementations,
+    []
+  );
+  assert.deepEqual(
+    resolution.missingImplementationSymbols,
+    [missingImplementationSymbol]
+  );
+  assert.deepEqual(
+    resolution.ambiguousImplementations,
+    []
+  );
+});
+
 test("SCIP workspace rejects duplicate repository ids", () => {
   const index = parseScipIndex(
     toBinary(
