@@ -935,4 +935,57 @@ test("cross-repository type provenance requires federated SCIP definition instea
   );
 
   assert.equal(evidence?.status, "complete");
+
+  const ambiguousWorkspace = new ScipWorkspace([
+    {
+      repositoryId: "consumer",
+      repositoryRoot: consumerRoot,
+      index: consumerIndex
+    },
+    {
+      repositoryId: "generated-client",
+      repositoryRoot: generatedRoot,
+      index: generatedIndex
+    },
+    {
+      repositoryId: "generated-client-copy",
+      repositoryRoot: path.join(
+        parent,
+        "generated-client-copy"
+      ),
+      index: generatedIndex
+    }
+  ]);
+
+  const withAmbiguousWorkspace =
+    await analyzeTypeScriptRepository(
+      repository,
+      {
+        scipIndex: consumerIndex,
+        scipWorkspace: ambiguousWorkspace
+      }
+    );
+
+  assert.equal(
+    withAmbiguousWorkspace.facts.some(
+      (fact) =>
+        fact.kind === "api-boundary-type"
+    ),
+    false
+  );
+
+  const ambiguousEvidence =
+    withAmbiguousWorkspace.evidence.find(
+      (item) =>
+        item.factKind === "api-boundary-type"
+    );
+
+  assert.equal(
+    ambiguousEvidence?.status,
+    "partial"
+  );
+  assert.match(
+    ambiguousEvidence?.message ?? "",
+    /match multiple SCIP workspace definitions/
+  );
 });

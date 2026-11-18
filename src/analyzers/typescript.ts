@@ -616,7 +616,8 @@ function typeName(
 type TypeProvenanceResolution =
   | "generated"
   | "not-generated"
-  | "unresolved";
+  | "unresolved"
+  | "ambiguous";
 
 interface TypeProvenanceContext {
   repository: ResolvedTypeScriptRepository;
@@ -638,6 +639,13 @@ function mergeTypeProvenance(
     next === "generated"
   ) {
     return "generated";
+  }
+
+  if (
+    current === "ambiguous" ||
+    next === "ambiguous"
+  ) {
+    return "ambiguous";
   }
 
   if (
@@ -719,17 +727,24 @@ function typeNodeReferencesGenerated(
       return "not-generated";
     }
 
-    const workspaceDefinition =
-      context.scipWorkspace?.findDefinition(
+    const workspaceResolution =
+      context.scipWorkspace?.resolveDefinition(
         symbol
       );
 
-    if (!workspaceDefinition) {
+    if (
+      !workspaceResolution ||
+      workspaceResolution.status === "missing"
+    ) {
       return "unresolved";
     }
 
+    if (workspaceResolution.status === "ambiguous") {
+      return "ambiguous";
+    }
+
     return isInsideAny(
-      workspaceDefinition.absolutePath,
+      workspaceResolution.definition.absolutePath,
       context.repository.generatedRuntimeDirs
     )
       ? "generated"
@@ -1222,6 +1237,7 @@ export async function analyzeTypeScriptRepository(
   let unresolvedInternalImports = 0;
   let unresolvedCallbackFlows = 0;
   let unresolvedTypeProvenance = 0;
+  let ambiguousTypeProvenance = 0;
 
   for (const absoluteFile of files) {
     const sourceFile =
@@ -1710,6 +1726,11 @@ export async function analyzeTypeScriptRepository(
                 continue;
               }
 
+              if (provenance === "ambiguous") {
+                ambiguousTypeProvenance += 1;
+                continue;
+              }
+
               facts.push({
                 kind: "api-boundary-type",
                 repositoryId: repository.id,
@@ -1937,6 +1958,20 @@ export async function analyzeTypeScriptRepository(
       ? undefined
       : `${reachabilityIssues.join("; ")}; call reachability facts may be incomplete.`;
 
+  const typeProvenanceIssues: string[] = [];
+
+  if (unresolvedTypeProvenance > 0) {
+    typeProvenanceIssues.push(
+      `${unresolvedTypeProvenance} API boundary type reference(s) have no definition in the configured SCIP workspace`
+    );
+  }
+
+  if (ambiguousTypeProvenance > 0) {
+    typeProvenanceIssues.push(
+      `${ambiguousTypeProvenance} API boundary type reference(s) match multiple SCIP workspace definitions`
+    );
+  }
+
   const evidence: FactEvidence[] = [
     {
       repositoryId: repository.id,
@@ -1971,12 +2006,12 @@ export async function analyzeTypeScriptRepository(
       factKind: "api-boundary-type",
       status:
         importResolutionStatus === "complete" &&
-        unresolvedTypeProvenance === 0
+        typeProvenanceIssues.length === 0
           ? "complete"
           : "partial",
       message:
-        unresolvedTypeProvenance > 0
-          ? `${unresolvedTypeProvenance} API boundary type reference(s) could not be resolved through the configured SCIP workspace.`
+        typeProvenanceIssues.length > 0
+          ? `${typeProvenanceIssues.join("; ")}.`
           : importResolutionMessage
     }
   ];

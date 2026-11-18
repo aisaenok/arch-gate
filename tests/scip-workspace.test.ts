@@ -133,7 +133,7 @@ test("SCIP workspace does not federate document-local symbols", () => {
   );
 });
 
-test("SCIP workspace rejects ambiguous global definitions", () => {
+test("SCIP workspace reports ambiguous global definitions without losing candidates", () => {
   const symbol =
     "scip-typescript npm shared 1.0.0 src/\`types.ts\`/Shared#";
   const workspace = new ScipWorkspace([
@@ -154,6 +154,19 @@ test("SCIP workspace rejects ambiguous global definitions", () => {
       )
     }
   ]);
+
+  const resolution =
+    workspace.resolveDefinition(symbol);
+
+  assert.equal(resolution.status, "ambiguous");
+  if (resolution.status === "ambiguous") {
+    assert.deepEqual(
+      resolution.definitions.map(
+        (definition) => definition.repositoryId
+      ),
+      ["first", "second"]
+    );
+  }
 
   assert.throws(
     () => workspace.findDefinition(symbol),

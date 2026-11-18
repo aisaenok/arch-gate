@@ -20,6 +20,19 @@ export interface ScipWorkspaceDefinition {
   absolutePath: string;
 }
 
+export type ScipWorkspaceDefinitionResolution =
+  | {
+      status: "found";
+      definition: ScipWorkspaceDefinition;
+    }
+  | {
+      status: "missing";
+    }
+  | {
+      status: "ambiguous";
+      definitions: ScipWorkspaceDefinition[];
+    };
+
 export class ScipWorkspace {
   private readonly repositories = new Map<
     string,
@@ -57,11 +70,11 @@ export class ScipWorkspace {
     return [...this.repositories.keys()];
   }
 
-  findDefinition(
+  resolveDefinition(
     symbol: string
-  ): ScipWorkspaceDefinition | undefined {
+  ): ScipWorkspaceDefinitionResolution {
     if (!symbol || isLocalSymbol(symbol)) {
-      return undefined;
+      return { status: "missing" };
     }
 
     const matches: ScipWorkspaceDefinition[] = [];
@@ -86,14 +99,40 @@ export class ScipWorkspace {
       });
     }
 
+    if (matches.length === 0) {
+      return { status: "missing" };
+    }
+
     if (matches.length > 1) {
+      return {
+        status: "ambiguous",
+        definitions: matches
+      };
+    }
+
+    return {
+      status: "found",
+      definition: matches[0]!
+    };
+  }
+
+  findDefinition(
+    symbol: string
+  ): ScipWorkspaceDefinition | undefined {
+    const resolution = this.resolveDefinition(symbol);
+
+    if (resolution.status === "missing") {
+      return undefined;
+    }
+
+    if (resolution.status === "ambiguous") {
       throw new Error(
-        `SCIP symbol "${symbol}" has definitions in multiple workspace repositories: ${matches
+        `SCIP symbol "${symbol}" has definitions in multiple workspace repositories: ${resolution.definitions
           .map((match) => match.repositoryId)
           .join(", ")}`
       );
     }
 
-    return matches[0];
+    return resolution.definition;
   }
 }
